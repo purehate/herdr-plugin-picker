@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-09
 **Status:** Approved, pending implementation plan
-**Plugin id:** `operator.herdr-ssh`
+**Plugin id:** `purehate.herdr-ssh`
 
 ## Goal
 
@@ -47,8 +47,8 @@ Plugin environment contract, as exposed by Herdr to plugin processes:
 
 ## Constraints That Shaped the Design
 
-Two findings drove the architecture and are worth stating plainly, because the obvious
-implementations both fail:
+Three findings drove the architecture and are worth stating plainly, because the obvious
+implementations all fail:
 
 1. **`herdr pane split` and `herdr tab create` accept no command argument.** They spawn the
    default shell. The only supported way to run SSH in a fresh pane is a declared
@@ -63,6 +63,21 @@ implementations both fail:
    detection therefore happens _inside_ the session pane, which knows its own
    `HERDR_PANE_ID` for certain, before it hands the pty to SSH.
 
+3. **`herdr pane focus` cannot focus a pane by id** — it takes `--direction
+left|right|up|down` and moves to a _neighbor_. Focusing an arbitrary pane is
+   `herdr plugin pane focus <PANE_ID>`, which works for plugin-owned panes (ours are, since
+   they were opened via `plugin pane open`). A reused pane may also live in another tab or
+   workspace, so reuse is a three-step sequence, each step skipped when already current:
+
+   ```
+   herdr workspace focus <workspace_id>
+   herdr tab focus <tab_id>
+   herdr plugin pane focus <pane_id>
+   ```
+
+   `herdr pane list` with no arguments spans every workspace (23 panes across 10 on this
+   machine), so reuse lookup is global, not workspace-local.
+
 ## Architecture
 
 Single Go binary, four verbs, six focused packages.
@@ -70,7 +85,7 @@ Single Go binary, four verbs, six focused packages.
 ### Manifest (`herdr-plugin.toml`)
 
 ```toml
-id = "operator.herdr-ssh"
+id = "purehate.herdr-ssh"
 name = "SSH Picker"
 version = "0.1.0"
 min_herdr_version = "0.9.0"
@@ -110,7 +125,7 @@ Appended to `~/.config/herdr/config.toml`:
 [[keys.command]]
 key = "prefix+i"
 type = "plugin_action"
-command = "operator.herdr-ssh.open-picker"
+command = "purehate.herdr-ssh.open-picker"
 ```
 
 `prefix+r` was the operator's first instinct but is Herdr's built-in `resize_mode`.
@@ -122,14 +137,14 @@ no built-in. Free single keys remaining afterward: `a`, `u`.
 Each unit has one purpose, a defined interface, and is testable without a running Herdr.
 None should exceed roughly 250 lines.
 
-| Unit                 | Responsibility                               | Interface                                                                                            | Depends on        |
-| -------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ----------------- |
-| `internal/sshconfig` | Parse SSH config into hosts                  | `Parse(root string) ([]Host, []Warning, error)`                                                      | stdlib only       |
-| `internal/herdrapi`  | Every `herdr` CLI call, behind one exec seam | `PaneList()`, `PaneFocus(id)`, `PaneRename(id, name)`, `PluginPaneOpen(opts)`, `PluginPaneClose(id)` | `$HERDR_BIN_PATH` |
-| `internal/picker`    | Bubble Tea UI: filter, list, preview, keymap | `Run([]Host, Theme, Config) (Selection, error)`                                                      | sshconfig, theme  |
-| `internal/theme`     | Herdr theme → color tokens                   | `Load(configPath string) Theme`                                                                      | stdlib only       |
-| `internal/probe`     | Async TCP reachability                       | `Probe(ctx, []Host, timeout) <-chan Result`                                                          | stdlib only       |
-| `cmd/herdr-ssh`      | Wire the verbs                               | `plugin open-picker`, `picker`, `session`, `connect`                                                 | all of the above  |
+| Unit                 | Responsibility                               | Interface                                                                        | Depends on        |
+| -------------------- | -------------------------------------------- | -------------------------------------------------------------------------------- | ----------------- |
+| `internal/sshconfig` | Parse SSH config into hosts                  | `Parse(root string) ([]Host, []Warning, error)`                                  | stdlib only       |
+| `internal/herdrapi`  | Every `herdr` CLI call, behind one exec seam | `PaneList()`, `FocusPane(pane)`, `PaneRename(id, label)`, `PluginPaneOpen(opts)` | `$HERDR_BIN_PATH` |
+| `internal/picker`    | Bubble Tea UI: filter, list, preview, keymap | `Run([]Host, Theme, Config) (Selection, error)`                                  | sshconfig, theme  |
+| `internal/theme`     | Herdr theme → color tokens                   | `Load(configPath string) Theme`                                                  | stdlib only       |
+| `internal/probe`     | Async TCP reachability                       | `Probe(ctx, []Host, timeout) <-chan Result`                                      | stdlib only       |
+| `cmd/herdr-ssh`      | Wire the verbs                               | `plugin open-picker`, `picker`, `session`, `connect`                             | all of the above  |
 
 `connect` is the non-interactive escape hatch: `herdr-ssh connect <host> --placement tab`
 performs a selection's side effects without the UI. It makes the pane-opening path
@@ -176,10 +191,10 @@ type Selection struct {
 
 ```
 prefix+i
-  └─ Herdr runs action `operator.herdr-ssh.open-picker`
+  └─ Herdr runs action `purehate.herdr-ssh.open-picker`
        env: HERDR_PANE_ID (the focused pane), HERDR_WORKSPACE_ID
      1. write caller context → $HERDR_PLUGIN_STATE_DIR/caller.json
-     2. herdr plugin pane open --plugin operator.herdr-ssh \
+     2. herdr plugin pane open --plugin purehate.herdr-ssh \
           --entrypoint picker --placement overlay --focus
 
   └─ overlay pane runs `herdr-ssh picker`
@@ -189,18 +204,18 @@ prefix+i
           enter → split      ^t → tab
           ^z    → zoomed     ^n → force new
      6a. an `ssh:<host>` pane exists and !ForceNew and reuse_panes
-           → herdr pane focus <id>
-           → herdr plugin pane close picker
+           → workspace focus / tab focus / plugin pane focus <id>
+           → herdr plugin pane close $HERDR_PANE_ID
      6b. otherwise
            → herdr plugin pane open --entrypoint session \
                --placement <split|tab|zoomed> \
                --target-pane <caller pane from caller.json> \
                --direction <split_direction> \
                --env HERDR_SSH_TARGET=<alias> --focus
-           → herdr plugin pane close picker
+           → herdr plugin pane close $HERDR_PANE_ID
 
   └─ session pane runs `herdr-ssh session`
-     7. herdr pane rename $HERDR_PANE_ID "ssh:<alias>"
+     7. herdr pane rename $HERDR_PANE_ID "ssh:<alias>"   (sets PaneInfo.label)
      8. syscall.Exec(ssh, ssh_args..., alias)   ← SSH owns the pty from here
 ```
 
