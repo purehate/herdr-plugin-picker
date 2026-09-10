@@ -1,0 +1,9 @@
+Host good
+  HostName 10.5.5.5
+
+OrphanedKeyword
+Port=
+
+# a real comment, not malformed
+
+

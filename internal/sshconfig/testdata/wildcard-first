@@ -1,0 +1,7 @@
+Host *
+  User fallback
+  Port 2200
+
+Host late
+  HostName 10.3.3.3
+  User ignored-because-wildcard-came-first

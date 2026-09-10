@@ -1,0 +1,32 @@
+# global defaults
+ServerAliveInterval 30
+
+Host nixos-dev
+  HostName 192.0.2.10
+  User operator
+  Port 22
+  IdentityFile ~/.ssh/id_nixos
+
+Host build box
+  HostName 10.0.0.12
+  User root
+
+Host web1
+  HostName 10.0.0.20
+  User root
+  User ignored-second-value
+
+Host jumped
+  HostName 10.9.9.9
+  ProxyJump bastion
+
+Match exec "true"
+  User never-applied
+
+Host *.internal
+  Port 2222
+
+# general defaults last, per ssh_config(5)
+Host *
+  User fallback
+  IdentityFile ~/.ssh/id_default

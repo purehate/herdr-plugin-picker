@@ -1,0 +1,18 @@
+# The spec and the plan embed source files verbatim in fenced code blocks, and
+# the review process checks those fences byte-for-byte against the committed
+# files. Prettier formats embedded code for languages it can parse — verified
+# here: it rewrites ```yaml and ```json fences (collapsing indentation, turning
+# `[ main ]` into `[main]`) while leaving ```go, ```toml, and ```bash alone.
+# That is silent drift in exactly the artifact whose value is being identical to
+# the repo, and Task 21 embeds .github/workflows/ci.yml, so it is not theoretical.
+#
+# This file is only half the guard. Prettier resolves .prettierignore relative
+# to the process CWD, so it does nothing when prettier is invoked from outside
+# this repo — which is the common case here, since the editor hook that runs it
+# does not use the repo root as its CWD. The load-bearing guard is the in-file
+# `<!-- prettier-ignore -->` marker above each yaml/json fence. This file only
+# covers running prettier from the repo root by hand.
+#
+# Keeping docs/ unformatted costs nothing: this is a Go repo with no other
+# prettier consumer.
+docs/

@@ -1,0 +1,16 @@
+# The Include lines sit at top level, ahead of any Host stanza, because that is
+# the only position where the included stanzas actually activate. Verified
+# against OpenSSH_10.3p1: with `Include included/*` placed inside the
+# `Host local-one` stanza instead, `ssh -G from-include` reports
+# `hostname from-include` / `user operator` — the included stanza is parsed under
+# NEVERMATCH and never applies. Hoisted above `Host local-one`, the same
+# `ssh -G from-include` reports `hostname 10.2.2.2` / `user included-user`.
+Include included/*
+
+Include ./missing/nothing-here
+
+Host local-one
+  HostName 10.1.1.1
+
+Host local-two
+  HostName 10.1.1.2

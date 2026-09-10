@@ -1,0 +1,3 @@
+Host from-include
+  HostName 10.2.2.2
+  User included-user

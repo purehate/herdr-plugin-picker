@@ -1,0 +1,27 @@
+id = "purehate.herdr-ssh"
+name = "SSH Picker"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "Fuzzy-pick a host from ~/.ssh/config and SSH into a new pane, tab, or zoomed pane."
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["go", "build", "-o", "bin/", "./cmd/herdr-ssh"]
+
+[[actions]]
+id = "open-picker"
+title = "Open SSH Picker"
+contexts = ["workspace", "pane"]
+command = ["./bin/herdr-ssh", "plugin", "open-picker"]
+
+[[panes]]
+id = "picker"
+title = "SSH Hosts"
+placement = "overlay"
+command = ["./bin/herdr-ssh", "picker"]
+
+[[panes]]
+id = "session"
+title = "ssh"
+placement = "split"
+command = ["./bin/herdr-ssh", "session"]

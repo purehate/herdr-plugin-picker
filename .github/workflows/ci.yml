@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Module is tidy
+        # `git diff --exit-code` is the assertion: tidy rewrites the files in
+        # place and exits 0 either way, so its own status proves nothing.
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+      - name: Test
+        # -timeout is per test binary, not per suite: the bound applies to the
+        # slowest package, which is cmd/herdr-ssh at 5.2s under -race (max of
+        # three runs at 051a1a2, 16 cores). 2m is ~23x that for headroom on a
+        # slower runner, and still fails 5x sooner than Go's 10m default. If a
+        # runner ever trips it, raise it -- a timeout that fires on a slow
+        # runner turns a real pass into a fake failure.
+        #
+        # Do not delete this to save CI minutes -- the time is not the point.
+        # The point is that the timeout panic dumps every goroutine and names
+        # the hung test, which is the only thing that makes a deadlock
+        # diagnosable from a CI log you cannot attach a debugger to. Without it
+        # a hang is a job that burns Go's 10m default and then tells you
+        # nothing. internal/probe streams results over an unbuffered channel and
+        # selects on ctx.Done(), so this repo has real candidates for that shape
+        # of failure.
+        run: go test -race -count=1 -timeout 2m ./...
+      - name: Build
+        run: go build -o bin/ ./cmd/herdr-ssh
