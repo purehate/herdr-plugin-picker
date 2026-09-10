@@ -100,10 +100,13 @@ func runPicker() error {
 // one needs a tty.
 func runPickerWith(out io.Writer, in io.Reader, pick pickerFn, api herdrapi.Client) error {
 	// Keep the returned Config; only the rejected keys were reset. See runSession.
-	cfg, cfgErr := pluginconfig.LoadDir(os.Getenv("HERDR_PLUGIN_CONFIG_DIR"))
+	// Resolved rather than read straight from the env: a popup keybinding is the
+	// mode that renders a floating box, and herdr sets neither variable for one.
+	// See env.go.
+	cfg, cfgErr := pluginconfig.LoadDir(resolvePluginConfigDir())
 	// theme.LoadFile always returns a usable Theme, so th is safe to render with
 	// even when themeErr is non-nil. The error is reported, not acted on.
-	th, themeErr := theme.LoadFile(os.Getenv("HERDR_CONFIG_PATH"))
+	th, themeErr := theme.LoadFile(resolveHerdrConfigPath())
 
 	hosts, warnings := loadHosts(sshConfigPath(), cfg)
 	// Surface load errors in the footer rather than writing them out. This path
@@ -180,13 +183,14 @@ func runPickerWith(out io.Writer, in io.Reader, pick pickerFn, api herdrapi.Clie
 		return fatalInPane(out, in, err)
 	}
 
-	self := os.Getenv("HERDR_PANE_ID")
+	// Deliberately not resolveCaller's HERDR_ACTIVE_PANE_ID: see pickerSelfPane.
+	self := pickerSelfPane()
 	if !ok {
 		closeOverlay(out, api, self)
 		return nil
 	}
 
-	if err := performSelection(out, api, cfg, sel, readCaller(os.Getenv("HERDR_PLUGIN_STATE_DIR"))); err != nil {
+	if err := performSelection(out, api, cfg, sel, resolveCaller(readCaller(os.Getenv("HERDR_PLUGIN_STATE_DIR")))); err != nil {
 		// Hold the overlay open with the error on screen, and only then close.
 		// Closing first would take the only explanation with it.
 		//
@@ -248,7 +252,10 @@ func runConnectWith(out io.Writer, args []string) error {
 	}
 
 	// Keep the returned Config; only the rejected keys were reset. See runSession.
-	cfg, err := pluginconfig.LoadDir(os.Getenv("HERDR_PLUGIN_CONFIG_DIR"))
+	// Resolved for the same reason runPickerWith resolves it, and for one more:
+	// connect is a scriptable verb, so it also runs from a plain shell with none
+	// of herdr's variables set. See env.go.
+	cfg, err := pluginconfig.LoadDir(resolvePluginConfigDir())
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "herdr-ssh: %v — ignoring the rejected keys\n", err)
 	}
