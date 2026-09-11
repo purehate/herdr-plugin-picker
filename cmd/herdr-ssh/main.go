@@ -66,7 +66,21 @@ func run(args []string) error {
 }
 
 // openPicker runs in the caller's pane: it records where the operator was, then
-// opens the overlay.
+// opens the picker as a floating popup.
+//
+// Recording the caller first is the whole reason this verb exists rather than
+// the action shelling straight out to `herdr plugin pane open`. The picker
+// needs to know which pane the operator triggered it from so `enter` splits
+// that pane rather than whichever one herdr happens to consider active by the
+// time a selection is made — and this process, unlike the picker's, is running
+// in that pane's context.
+//
+// Placement matches the manifest's pane declaration. Both carry it because
+// they are read on different paths: the manifest's is what a `plugin_action`
+// keybinding gets, and this one is what an explicit `plugin pane open` call
+// gets. Letting them drift would mean the picker floats or docks depending on
+// how it was invoked, which is the kind of difference nobody notices until it
+// is a bug report.
 func openPicker(api herdrapi.Client) error {
 	if err := writeCaller(os.Getenv("HERDR_PLUGIN_STATE_DIR"), currentCaller()); err != nil {
 		return err
@@ -74,7 +88,7 @@ func openPicker(api herdrapi.Client) error {
 	return api.PluginPaneOpen(herdrapi.OpenOpts{
 		Plugin:     pluginID,
 		Entrypoint: "picker",
-		Placement:  "overlay",
+		Placement:  "popup",
 		Focus:      true,
 	})
 }

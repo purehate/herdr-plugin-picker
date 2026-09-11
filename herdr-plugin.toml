@@ -14,10 +14,29 @@ title = "Open SSH Picker"
 contexts = ["workspace", "pane"]
 command = ["./bin/herdr-ssh", "plugin", "open-picker"]
 
+# placement = "popup" is what makes the picker a floating box rather than a
+# pane docked into the layout. It is deliberately declared here rather than
+# left to a keybinding: a `type = "popup"` keybinding also floats, but it runs
+# a bare command, so it needs an absolute path to this plugin's binary — a path
+# that is only knowable on the machine that checked the repo out. Declaring the
+# placement on the pane means anyone can install this and bind
+# `purehate.herdr-ssh.open-picker` with no paths at all.
+#
+# `herdr plugin pane open --help` lists only overlay/split/tab/zoomed and omits
+# popup. The help is a subset of what the parser accepts, not a superset: the
+# API schema's PluginPanePlacement enum includes popup, and ray.plugin-manager
+# ships exactly this shape in production.
+#
+# Cells rather than a percentage, for the same reason the README gives: the
+# picker fills whatever it is handed, so a percentage of a large terminal is a
+# wall instead of a dialog. 94 columns fits an alias plus user@hostname:port;
+# 28 rows holds a dozen hosts and the preview.
 [[panes]]
 id = "picker"
 title = "SSH Hosts"
-placement = "overlay"
+placement = "popup"
+width = 94
+height = 28
 command = ["./bin/herdr-ssh", "picker"]
 
 [[panes]]

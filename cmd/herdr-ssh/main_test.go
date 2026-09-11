@@ -69,7 +69,7 @@ func TestRunRejectsUnknownVerbs(t *testing.T) {
 	}
 }
 
-func TestOpenPickerWritesCallerAndOpensTheOverlay(t *testing.T) {
+func TestOpenPickerWritesCallerAndOpensThePopup(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
 	t.Setenv("HERDR_PANE_ID", "w5:pA")
@@ -89,9 +89,61 @@ func TestOpenPickerWritesCallerAndOpensTheOverlay(t *testing.T) {
 	if got := readCaller(dir); got.PaneID != "w5:pA" || got.WorkspaceID != "w5" {
 		t.Errorf("caller.json = %+v", got)
 	}
-	want := "plugin pane open --plugin purehate.herdr-ssh --entrypoint picker --placement overlay --focus"
+	want := "plugin pane open --plugin purehate.herdr-ssh --entrypoint picker --placement popup --focus"
 	if len(calls) != 1 || strings.Join(calls[0], " ") != want {
 		t.Fatalf("argv = %v, want %q", joined(calls), want)
+	}
+}
+
+// TestTheManifestAndOpenPickerAgreeOnPlacement reads the shipped manifest
+// rather than restating it.
+//
+// Two places carry the picker's placement, and they are read on different
+// paths: the manifest's is what a `plugin_action` keybinding gets, and
+// openPicker's is what an explicit `plugin pane open` gets. Drift between them
+// does not fail anything — it makes the picker float or dock depending on how
+// it was invoked, which is a bug report from a stranger rather than a red test.
+//
+// Parsed out of the file with a scanner instead of a TOML decoder because the
+// module has three direct dependencies and this is not worth a fourth. The
+// scan is anchored to the `id = "picker"` stanza so the session pane's
+// `placement = "split"` cannot satisfy it.
+func TestTheManifestAndOpenPickerAgreeOnPlacement(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "herdr-plugin.toml"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	var inPicker bool
+	var placement string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "[[panes]]":
+			inPicker = false
+		case line == `id = "picker"`:
+			inPicker = true
+		case inPicker && strings.HasPrefix(line, "placement ="):
+			placement = strings.Trim(strings.TrimPrefix(line, "placement ="), ` "`)
+		}
+	}
+	if placement == "" {
+		t.Fatal("no placement found in the manifest's picker pane; the stanza scan needs updating")
+	}
+
+	var calls [][]string
+	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
+		calls = append(calls, args)
+		return []byte(`{"id":1,"result":{}}`), nil
+	}}
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	if err := openPicker(api); err != nil {
+		t.Fatalf("openPicker: %v", err)
+	}
+
+	want := "--placement " + placement
+	if got := strings.Join(calls[0], " "); !strings.Contains(got, want) {
+		t.Errorf("the manifest declares the picker pane as %q but openPicker asks for a different placement:\n  argv = %s\n  want it to contain %q", placement, got, want)
 	}
 }
 
