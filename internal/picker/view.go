@@ -90,13 +90,19 @@ func previewFields(h sshconfig.Host) []string {
 	return lines
 }
 
-// fixedChrome counts the lines View draws whatever the height is: the query
-// header, the key hints, and the warning block when there is one. These do not
-// yield. The header is the operator's own typing echoed back, the hints are the
-// only discoverability the picker has, and a warning is the only account of a
-// host the operator can see in their own config and cannot see here.
+// fixedChrome counts the lines View draws whatever the height is: the box, the
+// title block, the footer, and the warning block when there is one. These do
+// not yield. The title is the operator's own typing echoed back, the hints are
+// the only discoverability the picker has, a warning is the only account of a
+// host the operator can see in their own config and cannot see here, and the
+// border is the only thing that says where the popup ends.
+//
+// This is the one lever the whole height budget hangs off — visibleRows and
+// previewLines both subtract it — so the box's cost is spelled out as named
+// constants rather than folded into a number. TestFixedChromeCountsWhatTheBoxDraws
+// asserts the total against what the frame actually emits.
 func (m model) fixedChrome() int {
-	return 2 + m.warningLines() // query header + key hints
+	return boxRows + headerRows + footerRows + m.warningLines()
 }
 
 // warningLines is how many footer lines the warnings occupy: one per warning up
@@ -194,38 +200,51 @@ func (m model) visibleRows() int {
 }
 
 func (m model) View() tea.View {
-	t := m.opts.Theme
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Accent)).Bold(true)
-	text := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Text))
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted))
-	upStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Up))
+	s := newStyles(m.opts.Theme)
 
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s\n", accent.Render("ssh"), text.Render(m.query+"▏"))
+	// The body first, then the rule, because the rule's width is the box's and
+	// on the first frame — before any WindowSizeMsg — the box's width is
+	// whatever its widest line turns out to be. Assembling in this order is
+	// what lets the rule reach both walls then instead of stopping short.
+	title := fmt.Sprintf("%s %s", s.accent.Render("ssh"), s.text.Render(m.query+"▏"))
 
+	var body strings.Builder
 	switch {
 	case len(m.opts.Hosts) == 0:
-		b.WriteString(muted.Render("  no ~/.ssh/config — nothing to pick") + "\n")
+		body.WriteString(s.muted.Render("  no ~/.ssh/config — nothing to pick") + "\n")
 	case len(m.view) == 0:
-		b.WriteString(muted.Render("  no hosts match") + "\n")
+		body.WriteString(s.muted.Render("  no hosts match") + "\n")
 	default:
-		b.WriteString(m.renderRows(accent, text, muted, upStyle))
+		body.WriteString(m.renderRows(s))
 	}
 
 	if m.showPreview() {
-		b.WriteString(m.renderPreview(muted, text))
+		body.WriteString(m.renderPreview(s))
 	}
 
-	b.WriteString(muted.Render("  enter split · ^t tab · ^z zoom · ^n new · ^o preview · ^u clear · esc close") + "\n")
-	b.WriteString(m.renderWarnings(muted))
+	body.WriteString("\n")
+	body.WriteString(renderHints(s) + "\n")
+	body.WriteString(m.renderWarnings(s))
 
-	// Leave AltScreen and MouseMode at their zero values: the pane is already an
-	// overlay, and the picker is keyboard-only.
-	return tea.NewView(m.clampToWidth(b.String()))
+	w := m.innerWidth()
+	if w == 0 {
+		w = widestLine(title + "\n" + body.String())
+	}
+
+	var frame strings.Builder
+	frame.WriteString(title + "\n")
+	frame.WriteString(rule(w, s.muted) + "\n")
+	frame.WriteString("\n")
+	frame.WriteString(body.String())
+
+	// Leave AltScreen and MouseMode at their zero values: the popup is already
+	// a modal of its own, and the picker is keyboard-only.
+	return tea.NewView(m.box(m.clampToWidth(frame.String()), s.border))
 }
 
-// clampToWidth truncates every line of the finished frame to m.width display
-// columns. It is the only place the pane width is read.
+// clampToWidth truncates every line of the assembled content to the width
+// inside the border. box applies the same cut to the finished frame at the pane
+// width; between them they are the only places a width is read.
 //
 // Width is a height problem. The picker renders inline rather than in an
 // alternate screen, so the renderer sizes the frame to its content instead of
@@ -242,13 +261,13 @@ func (m model) View() tea.View {
 // View to be silently exempt. The clamp cannot know what it is cutting, which is
 // what the fix wants — truncate, never re-layout.
 //
-// m.width <= 0 means no truncation. Width is 0 until the first
+// A width of zero or less means no truncation. Width is 0 until the first
 // tea.WindowSizeMsg arrives, and a clamp to 0 would draw the first frame as
 // nothing at all.
 //
-// The guard is defensive rather than load-bearing today, and deleting it is the
-// one change to this function no test catches: lipgloss applies MaxWidth only
-// when it is > 0, so the clamp below is already a no-op at a zero or negative
+// The guard in clampLines is defensive rather than load-bearing today, and
+// deleting it is the one change here no test catches: lipgloss applies MaxWidth
+// only when it is > 0, so the clamp is already a no-op at a zero or negative
 // width. Keep it anyway. It states the contract where the width is read instead
 // of borrowing it from a library, and it is the difference between a correct
 // first frame and an empty one the moment the truncation primitive changes.
@@ -265,14 +284,30 @@ func (m model) View() tea.View {
 // call is deliberate: lipgloss also runs horizontal alignment on a multi-line
 // render, which pads every short line out to the longest one.
 func (m model) clampToWidth(frame string) string {
-	if m.width <= 0 {
-		return frame
+	// innerWidth, not m.width: this runs on the content, before box wraps it in
+	// a border and a column of padding on each side. Clamping to the pane width
+	// here would let every line overhang the box by the four columns the frame
+	// itself occupies, and lipgloss would soft-wrap each one into a second row —
+	// which is the overflow the height budget cannot see.
+	return clampLines(frame, m.innerWidth())
+}
+
+// clampLines truncates every line of s to w display columns, or returns s
+// unchanged when w is not positive.
+//
+// Split out from clampToWidth because box needs the same cutting at a different
+// width: the content is clamped to the width inside the border, and the
+// finished box to the pane. One implementation rather than two, so the escape
+// handling above is stated once.
+func clampLines(s string, w int) string {
+	if w <= 0 {
+		return s
 	}
-	clamp := lipgloss.NewStyle().MaxWidth(m.width)
+	clamp := lipgloss.NewStyle().MaxWidth(w)
 	// Every line View emits is newline-terminated, so the final element here is
 	// the empty string after the trailing newline. Clamping it yields itself,
 	// and rejoining restores the frame's exact line structure.
-	lines := strings.Split(frame, "\n")
+	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		lines[i] = clamp.Render(l)
 	}
@@ -327,58 +362,74 @@ func (m model) window() ([]Match, int) {
 	return m.view[start : start+rows], m.cursor - start
 }
 
-func (m model) renderRows(accent, text, muted, upStyle lipgloss.Style) string {
+func (m model) renderRows(s styles) string {
 	rows, cursor := m.window()
 	var b strings.Builder
 	for i, row := range rows {
 		h := row.Host
 		marker := blankMarker
-		style := muted
+		style := s.muted
 		switch {
 		case h.ProxyJump != "":
 			marker = skipMarker
 		case m.probed[h.Alias] && m.up[h.Alias]:
-			marker, style = upMarker, upStyle
+			marker, style = upMarker, s.up
 		case m.probed[h.Alias]:
 			marker = downMarker
 		}
 		// "open" wins over reachability: it is the marker that changes what
 		// enter does.
 		if _, open := m.opts.OpenPanes[h.Alias]; open {
-			marker, style = openMarker, accent
+			marker, style = openMarker, s.accent
 		}
 
-		base := text
+		// base, dim and hit are the row's three roles: the alias, the detail
+		// column, and a rune that matched the query.
+		base, dim, hit := s.text, s.muted, s.accent
 		pointer := "  "
-		if i == cursor {
-			// The cursor row goes bold rather than fully accented. The accent
-			// color now means "this rune matched the query", so it cannot also
-			// mean "this is the cursor" without swallowing the highlight.
-			pointer = accent.Render("▸ ")
-			base = text.Bold(true)
+		selected := i == cursor
+		if selected {
+			// Every piece of the cursor row shares one style, because the band
+			// has to be a single uninterrupted color — a muted detail column or
+			// a green reachability marker inside it would punch holes in it. The
+			// markers keep their glyphs, which is where the fact actually lives;
+			// only the color is redundant with the glyph.
+			//
+			// And the query highlight switches from color to underline. The old
+			// bold-only cursor existed because accent already means "this rune
+			// matched", so it could not also mean "this is the cursor" — the
+			// band takes over the second meaning, and accent-on-accent would
+			// erase the first. Underline says it without a second color.
+			base, dim, hit = s.chip, s.chip, s.chip.Underline(true)
+			style = s.chip
+			pointer = s.chip.Render("▸ ")
 		}
-		alias := highlight(h.Alias, row.AliasPos, base, accent)
+		alias := highlight(h.Alias, row.AliasPos, base, hit)
 
 		// The detail column is assembled from already-styled pieces rather than
 		// styled at the end, so the hostname's highlight positions stay aligned
 		// with the hostname itself when a user or port is prepended.
-		detail := highlight(h.HostName, row.HostNamePos, muted, accent)
+		detail := highlight(h.HostName, row.HostNamePos, dim, hit)
 		if h.User != "" {
-			detail = muted.Render(h.User+"@") + detail
+			detail = dim.Render(h.User+"@") + detail
 		}
 		// Both halves matter. Parse defaults Port to "22", so the second clause
 		// hides the port that every host has; the first covers a Host built
 		// directly rather than parsed, where Port is "" and a lone ":" would
 		// otherwise trail the hostname.
 		if h.Port != "" && h.Port != "22" {
-			detail += muted.Render(":" + h.Port)
+			detail += dim.Render(":" + h.Port)
 		}
 		if h.ProxyJump != "" {
 			// A jump host replaces the address outright: the address is not what
 			// the connection actually reaches.
-			detail = muted.Render("via " + h.ProxyJump)
+			detail = dim.Render("via " + h.ProxyJump)
 		}
-		fmt.Fprintf(&b, "%s%s %s  %s\n", pointer, style.Render(marker), alias, detail)
+		line := fmt.Sprintf("%s%s %s  %s", pointer, style.Render(marker), alias, detail)
+		if selected {
+			line = bar(line, m.innerWidth(), s.chip)
+		}
+		b.WriteString(line + "\n")
 	}
 	if len(m.view) > len(rows) {
 		// "off screen" rather than "more", because the count is every match the
@@ -390,10 +441,21 @@ func (m model) renderRows(accent, text, muted, upStyle lipgloss.Style) string {
 		// actionable here: there is no jump-to-end, so the operator's next move
 		// is ^j/^k or a narrower query either way, and one number is one thing
 		// to read.
-		fmt.Fprintf(&b, "%s\n", muted.Render(fmt.Sprintf("  … %d off screen", len(m.view)-len(rows))))
+		fmt.Fprintf(&b, "%s\n", s.muted.Render(fmt.Sprintf("  … %d off screen", len(m.view)-len(rows))))
 	}
 	return b.String()
 }
+
+// previewSeparator is the divider above the preview's fields, indented to the
+// same column as the fields under it rather than spanning the box.
+//
+// Named rather than written inline because it is what the tests look for when
+// they ask whether the preview is drawn, and a bare run of dashes no longer
+// answers that: the title's rule is dashes too, so a substring search for them
+// finds the frame whether the preview is there or not. Both directions of that
+// test were wrong at once — the "separator present" assertion passed off the
+// title rule, and the "separator shed" assertion failed against it.
+const previewSeparator = "  ─────"
 
 // renderPreview draws the separator plus the fields previewLines budgeted, in
 // declaration order — so a short pane sheds provenance before it sheds the
@@ -407,15 +469,15 @@ func (m model) renderRows(accent, text, muted, upStyle lipgloss.Style) string {
 // because the two differ if that contract ever slips: n < 2 degrades to no
 // block, n < 1 degrades to a divider with nothing under it. Only n == 0 must be
 // caught at all, since [:n-1] would panic on it.
-func (m model) renderPreview(muted, text lipgloss.Style) string {
+func (m model) renderPreview(s styles) string {
 	n := m.previewLines()
 	if n < 2 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(muted.Render("  ─────") + "\n")
+	b.WriteString(s.muted.Render(previewSeparator) + "\n")
 	for _, l := range previewFields(m.view[m.cursor].Host)[:n-1] {
-		b.WriteString("  " + text.Render(l) + "\n")
+		b.WriteString("  " + s.text.Render(l) + "\n")
 	}
 	return b.String()
 }
@@ -439,17 +501,17 @@ func (m model) renderPreview(muted, text lipgloss.Style) string {
 // warningLines counted as one — the overflow commit 58c9762 closed — and a
 // truncated warning still leads with the file and position the operator needs,
 // which is more than the count it replaces carried at any width.
-func (m model) renderWarnings(muted lipgloss.Style) string {
+func (m model) renderWarnings(s styles) string {
 	shown := m.opts.Warnings
 	if len(shown) > maxWarnings {
 		shown = shown[:maxWarnings]
 	}
 	var b strings.Builder
 	for _, w := range shown {
-		fmt.Fprintf(&b, "%s\n", muted.Render("  "+oneLine(w)))
+		fmt.Fprintf(&b, "%s\n", s.muted.Render("  "+oneLine(w)))
 	}
 	if hidden := len(m.opts.Warnings) - len(shown); hidden > 0 {
-		fmt.Fprintf(&b, "%s\n", muted.Render(fmt.Sprintf("  … %d more", hidden)))
+		fmt.Fprintf(&b, "%s\n", s.muted.Render(fmt.Sprintf("  … %d more", hidden)))
 	}
 	return b.String()
 }

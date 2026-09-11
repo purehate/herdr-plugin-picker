@@ -95,9 +95,13 @@ func frameLines(s string) []string {
 //
 // What this fixture holds constant, and why: every field except Alias and
 // HostName is identical, and User/IdentityFile/ProxyJump/SourceFile are all
-// unset. That pins the preview at its two-field minimum, which fixes the chrome
-// at a known 5 lines and makes the arithmetic in these assertions checkable by
-// hand. The height tests are about the row *count*, so the preview's own
+// unset. That pins the preview at its two-field minimum — a separator and two
+// lines, so the chrome is frameChrome plus three and the arithmetic in these
+// assertions stays checkable by hand. Stated as an offset from frameChrome
+// rather than as a total, because the total is not a property of this fixture:
+// it moved from 5 to 10 when the frame gained its box, and the sentence that
+// named the old number went on reading as if it had been verified.
+// The height tests are about the row *count*, so the preview's own
 // variable height is a confound here — TestChromeLinesTracksThePreviewHeight
 // varies it on purpose instead.
 //
@@ -435,11 +439,14 @@ func TestViewFooterIsAbsentWithoutWarnings(t *testing.T) {
 	m := newModel(Options{Hosts: manyHosts(3), Theme: theme.Default()})
 	out := stripANSI(renderSized(m, 200, 30))
 	lines := frameLines(renderSized(m, 200, 30))
-	if last := stripANSI(lines[len(lines)-1]); !strings.Contains(last, "esc close") {
-		t.Errorf("the frame's last line is %q, want the key hints; something was drawn below them:\n%s", last, out)
+	// The last line is the box's bottom border now, so the hints are the line
+	// above it. Asserting on the true last line would only re-assert that the
+	// box closes, which TestTheFrameIsBoxed already does.
+	if last := stripANSI(lines[len(lines)-2]); !strings.Contains(last, "esc close") {
+		t.Errorf("the frame's last content line is %q, want the key hints; something was drawn below them:\n%s", last, out)
 	}
-	if got, want := len(lines), 1+3+1; got != want {
-		t.Errorf("frame is %d lines, want %d — the query header, three hosts, and the key hints:\n%s", got, want, out)
+	if got, want := len(lines), frameChrome+3; got != want {
+		t.Errorf("frame is %d lines, want %d — the box, the title block, three hosts, and the footer:\n%s", got, want, out)
 	}
 }
 
@@ -459,12 +466,12 @@ func TestViewNeverExceedsTheReportedHeightWithWarnings(t *testing.T) {
 		warn  []string
 		floor int
 	}{
-		// The floor is the frame that cannot shrink: the query header and key
-		// hints, the warning block, one host row, and the list's overflow notice.
-		// The preview yields all the way to nothing; the warning block does not.
-		{"one warning", longWarnings(1), 2 + 1 + 1 + 1},
-		{"the cap exactly", longWarnings(warnCap), 2 + warnCap + 1 + 1},
-		{"past the cap, so the notice as well", longWarnings(warnCap + 3), 2 + warnCap + 1 + 1 + 1},
+		// The floor is the frame that cannot shrink: frameChrome, the warning
+		// block, one host row, and the list's overflow notice. The preview yields
+		// all the way to nothing; the warning block does not.
+		{"one warning", longWarnings(1), frameChrome + 1 + 1 + 1},
+		{"the cap exactly", longWarnings(warnCap), frameChrome + warnCap + 1 + 1},
+		{"past the cap, so the notice as well", longWarnings(warnCap + 3), frameChrome + warnCap + 1 + 1 + 1},
 	} {
 		m := newModel(Options{Hosts: wideHosts(30), Theme: th, ShowPreview: true, Warnings: tc.warn})
 		for _, w := range []int{40, 200} {
@@ -475,7 +482,7 @@ func TestViewNeverExceedsTheReportedHeightWithWarnings(t *testing.T) {
 				t.Fatalf("%s: the warning is %d columns and fits a %d-column pane; nothing here can wrap",
 					tc.name, lipgloss.Width("  "+tc.warn[0]), w)
 			}
-			for h := 1; h <= 24; h++ {
+			for h := 1; h <= sweepHeight; h++ {
 				want := h
 				if want < tc.floor {
 					want = tc.floor
@@ -513,13 +520,13 @@ func TestViewFillsThePaneWithTheWarningBlockPresent(t *testing.T) {
 		{"past the cap", longWarnings(warnCap + 3), warnCap + 1},
 	} {
 		m := newModel(Options{Hosts: manyHosts(30), Theme: th, Warnings: tc.warn})
-		// The query header and key hints, the warning block, one host row, and
-		// the list's overflow notice: the frame that cannot shrink.
-		floor := 2 + tc.lines + 1 + 1
+		// frameChrome, the warning block, one host row, and the list's overflow
+		// notice: the frame that cannot shrink.
+		floor := frameChrome + tc.lines + 1 + 1
 		// Past this the 12-row ceiling binds and the frame stops growing with
 		// the pane, so falling short there is the ceiling working rather than a
 		// row the footer took and did not use.
-		ceiling := 2 + tc.lines + 12 + 1
+		ceiling := frameChrome + tc.lines + 12 + 1
 		for h := floor; h <= ceiling; h++ {
 			if got := screenRows(renderSized(m, 200, h), 200); got != h {
 				t.Errorf("%s: a %d-line pane drew %d rows; the pane is not being filled:\n%s",
@@ -549,15 +556,16 @@ func TestViewFlattensAWarningThatCarriesItsOwnNewline(t *testing.T) {
 	m := newModel(Options{Hosts: manyHosts(30), Theme: theme.Default(), Warnings: warn})
 
 	// One warning is one reserved line whatever it happens to contain.
-	if got, want := m.fixedChrome(), 3; got != want {
+	if got, want := m.fixedChrome(), frameChrome+1; got != want {
 		t.Errorf("fixedChrome() = %d, want %d", got, want)
 	}
 	// Width 400 so nothing here is truncated: the failure under test is a row
 	// the frame gained, and a clamp would hide it by cutting the line instead.
-	for h := 1; h <= 24; h++ {
+	for h := 1; h <= sweepHeight; h++ {
 		want := h
-		if want < 5 { // header + hints + the warning + one host row + the notice
-			want = 5
+		// frameChrome + the warning + one host row + the notice.
+		if floor := frameChrome + 1 + 1 + 1; want < floor {
+			want = floor
 		}
 		if got := screenRows(renderSized(m, 400, h), 400); got > want {
 			t.Errorf("height %d drew %d screen rows, want <= %d:\n%s",
@@ -607,26 +615,46 @@ func TestViewHighlightsMatchedRunes(t *testing.T) {
 	}
 }
 
+// bandStyles is the palette the cursor row renders with: the band itself, and
+// the shape a query match takes on top of it.
+//
+// Built here rather than read from newStyles, so these assertions test the
+// behavior and not the encoding — the same reason the accent style is rebuilt
+// in every other styling test in this file. A helper that asked the production
+// code what it drew would agree with any change to it.
+func bandStyles(th theme.Theme) (band, hit lipgloss.Style) {
+	band = lipgloss.NewStyle().Foreground(lipgloss.Color(th.Accent)).Reverse(true)
+	return band, band.Underline(true)
+}
+
 func TestViewHighlightsHostNameOnAHostNameMatch(t *testing.T) {
-	// prod-web matches only through its HostName "dev.example.com". Accenting
-	// the alias would point the operator at the column that did not match.
+	// prod-web matches only through its HostName "dev.example.com". Marking the
+	// alias would point the operator at the column that did not match.
+	//
+	// It is also the only match, so it is the cursor row, and the highlight
+	// there is an underline on the band rather than the accent — accent on an
+	// accent band would erase it. The column the highlight lands on is what this
+	// test is about and that is unchanged; only which style carries it moved.
 	th := theme.Default()
 	raw := renderRaw(typeRunes(newModel(Options{Hosts: corpus, Theme: th}), "example"))
 
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Accent)).Bold(true)
-	requireStyling(t, accent)
+	band, hit := bandStyles(th)
+	requireStyling(t, band)
 
-	if want := accent.Render("example"); !strings.Contains(raw, want) {
-		t.Errorf("the hostname match is not accented; missing %q in:\n%q", want, raw)
+	if want := hit.Render("example"); !strings.Contains(raw, want) {
+		t.Errorf("the hostname match is not highlighted; missing %q in:\n%q", want, raw)
 	}
-	if bad := accent.Render("prod-web"); strings.Contains(raw, bad) {
-		t.Errorf("the alias was accented for a hostname-only match:\n%q", raw)
+	if bad := hit.Render("prod-web"); strings.Contains(raw, bad) {
+		t.Errorf("the alias was highlighted for a hostname-only match:\n%q", raw)
 	}
 }
 
 func TestViewShowsKeyHints(t *testing.T) {
 	out := render(newTestModel())
-	for _, hint := range []string{"enter", "^t", "^z", "^u"} {
+	// "↵" rather than "enter", matching herdr's own dialogs — the glyph is the
+	// key, and the columns it saves are what let the chip's padding fit without
+	// the line truncating any sooner than it did.
+	for _, hint := range []string{"↵", "^t", "^z", "^u"} {
 		if !strings.Contains(out, hint) {
 			t.Errorf("view missing the %q hint:\n%s", hint, out)
 		}
@@ -665,8 +693,12 @@ func tallPreviewHosts(n int) []sshconfig.Host {
 // TestChromeLinesTracksThePreviewHeight pins the chrome arithmetic directly.
 // The end-to-end fit tests below would pass with a hardcoded constant in any
 // terminal tall enough for the ceiling to bind instead, so the computation
-// needs its own assertion. The numbers are hand-checkable: query header + key
-// hints, plus one line per extra element.
+// needs its own assertion. The numbers are hand-checkable: frameChrome, plus
+// one line per extra element.
+//
+// The extras are written out as sums rather than folded into a total, because
+// what this test is for is that chromeLines adds up the same terms View draws —
+// a total would just be the answer copied out of the code.
 func TestChromeLinesTracksThePreviewHeight(t *testing.T) {
 	th := theme.Default()
 	for _, tc := range []struct {
@@ -674,13 +706,15 @@ func TestChromeLinesTracksThePreviewHeight(t *testing.T) {
 		opts Options
 		want int
 	}{
-		{"preview off", Options{Hosts: manyHosts(3), Theme: th}, 2},
-		{"minimal preview", Options{Hosts: manyHosts(3), Theme: th, ShowPreview: true}, 5},
-		{"six-field preview", Options{Hosts: tallPreviewHosts(3), Theme: th, ShowPreview: true}, 9},
+		{"preview off", Options{Hosts: manyHosts(3), Theme: th}, frameChrome},
+		// A separator plus HostName and Port, the two fields manyHosts sets.
+		{"minimal preview", Options{Hosts: manyHosts(3), Theme: th, ShowPreview: true}, frameChrome + 1 + 2},
+		// A separator plus all six.
+		{"six-field preview", Options{Hosts: tallPreviewHosts(3), Theme: th, ShowPreview: true}, frameChrome + 1 + 6},
 		{
 			"warning line",
 			Options{Hosts: manyHosts(3), Theme: th, Warnings: []string{"config:3: bad"}},
-			3,
+			frameChrome + 1,
 		},
 	} {
 		if got := newModel(tc.opts).chromeLines(); got != tc.want {
@@ -736,16 +770,31 @@ func parsedCorpus(t *testing.T, n int) []sshconfig.Host {
 	return hosts
 }
 
-// minFrame is the frame that cannot shrink: fixedChrome (query header + key
-// hints), one host row, and the overflow notice. The preview yields all the way
-// to nothing, but those four lines have nowhere left to go, so below height 4
-// the frame stops shrinking and stays put rather than growing. Showing the
-// operator zero hosts, or hiding the keys that dismiss the picker, would both be
-// worse than one line of overflow in a pane this small.
+// frameChrome is what View draws at every height before any warnings: the
+// border's two rows, the title block's three — title, rule, blank — and the
+// footer's two. It is fixedChrome with no warnings, spelled out from the same
+// constants rather than written down as a number, because every floor and every
+// discriminating height in this file is derived from it and they all have to
+// move together when the frame changes shape. They did not, once: the box added
+// five lines and nineteen tests here failed at the same time.
+const frameChrome = boxRows + headerRows + footerRows
+
+// minFrame is the frame that cannot shrink: frameChrome, one host row, and the
+// overflow notice. The preview yields all the way to nothing, but those lines
+// have nowhere left to go, so below this height the frame stops shrinking and
+// stays put rather than growing. Showing the operator zero hosts, hiding the
+// keys that dismiss the picker, or dropping the border that says where the
+// popup ends would all be worse than a line of overflow in a pane this small.
 //
-// It is a constant rather than a call to fixedChrome because every case below
-// has more than one host and no warnings. A fixture with warnings would need 5.
-const minFrame = 4
+// It has no warning term because every case below has more than one host and no
+// warnings. A fixture with warnings needs warningLines() on top.
+const minFrame = frameChrome + 1 + 1
+
+// sweepHeight is the top of every height sweep in this file: twenty rows above
+// the floor, which is the span they covered when the floor was four. A fixed 24
+// would now spend a third of each sweep on heights that all clamp to minFrame
+// and assert the same frame over and over.
+const sweepHeight = minFrame + 20
 
 // TestViewNeverExceedsTheReportedHeight is the invariant, swept rather than
 // sampled: at no height does the frame render more lines than the pane has. The
@@ -771,7 +820,7 @@ func TestViewNeverExceedsTheReportedHeight(t *testing.T) {
 		{"parsed config", parsedCorpus(t, 30), true},
 	} {
 		m := newModel(Options{Hosts: tc.hosts, Theme: th, ShowPreview: tc.preview})
-		for h := 1; h <= 24; h++ {
+		for h := 1; h <= sweepHeight; h++ {
 			want := h
 			if want < minFrame {
 				want = minFrame
@@ -789,15 +838,20 @@ func TestViewNeverExceedsTheReportedHeight(t *testing.T) {
 // a function of the cursor host, so one height is simultaneously fitting and
 // overflowing depending on which row the operator has arrowed to.
 //
-// Height 9 is the discriminating value for this fixture. Before the preview
-// learned to yield, a 9-line pane rendered 9 lines on host00 (3 preview fields)
-// and 10 on host01 (5), so the frame overflowed on every other keypress while
-// scrolling and was not reproducible from the pane size alone. Both are in the
-// sweep below; the neighbouring heights are there so a fix that merely special-
-// cased 9 would still fail.
+// frameChrome+7 is the discriminating value for this fixture. Before the
+// preview learned to yield, a pane that tall rendered exactly its height on
+// host00 (3 preview fields) and one line more on host01 (5), so the frame
+// overflowed on every other keypress while scrolling and was not reproducible
+// from the pane size alone. Both are in the sweep below; the neighbouring
+// heights are there so a fix that merely special-cased the one would still
+// fail.
+//
+// Written as offsets from frameChrome rather than as the heights they came to,
+// because what makes a height discriminating is how much room is left after the
+// chrome — the box moved every one of them by five.
 func TestViewFitsAtEveryCursorPositionInAShortPane(t *testing.T) {
 	hosts := parsedCorpus(t, 12)
-	for _, h := range []int{7, 8, 9, 10, 12} {
+	for _, h := range []int{frameChrome + 5, frameChrome + 6, frameChrome + 7, frameChrome + 8, frameChrome + 10} {
 		m := newModel(Options{Hosts: hosts, Theme: theme.Default(), ShowPreview: true})
 		for i := range hosts {
 			cursor := m.view[m.cursor].Host
@@ -824,17 +878,23 @@ func TestViewPreviewShedsFieldsBeforeItDisappears(t *testing.T) {
 		t.Fatalf("cursor host has %d preview fields, want 3; "+
 			"the heights below are computed from that", n)
 	}
+	// shedBase is the height at which the preview's budget is zero: frameChrome,
+	// one host row and the overflow notice, with nothing left over. Each case
+	// below adds the lines it expects the preview to get, so the heights say
+	// what they are testing instead of being four numbers that moved when the
+	// box did.
+	const shedBase = frameChrome + 1 + 1
 	for _, tc := range []struct {
 		height  int
 		present []string
 		absent  []string
 	}{
-		{8, []string{"HostName ", "Port ", "source "}, nil},
-		{7, []string{"HostName ", "Port "}, []string{"source "}},
-		{6, []string{"HostName "}, []string{"Port ", "source "}},
+		{shedBase + 4, []string{"HostName ", "Port ", "source "}, nil},
+		{shedBase + 3, []string{"HostName ", "Port "}, []string{"source "}},
+		{shedBase + 2, []string{"HostName "}, []string{"Port ", "source "}},
 		// One line short of a separator plus a field, so the block goes rather
 		// than drawing a divider with nothing under it. The host row stays.
-		{5, []string{"host00", "esc close"}, []string{"HostName ", "─────"}},
+		{shedBase + 1, []string{"host00", "esc close"}, []string{"HostName ", previewSeparator}},
 	} {
 		out := stripANSI(renderAt(m, tc.height))
 		for _, want := range tc.present {
@@ -856,18 +916,19 @@ func TestViewPreviewShedsFieldsBeforeItDisappears(t *testing.T) {
 // the frame would fit, and the preview would be correctly absent, while the pane
 // sat one row short of full. The lines have to actually reach the host list.
 //
-// Height 5 is the shortest pane where the preview is gone and there is still
-// slack to spend: fixedChrome 2 plus the notice leaves 2 rows, so host01 is
-// present exactly when the yielded line was reused rather than dropped.
+// frameChrome+3 is the shortest pane where the preview is gone and there is
+// still slack to spend: the chrome plus the notice leaves two rows, so host01
+// is present exactly when the yielded line was reused rather than dropped.
 func TestViewSpendsTheYieldedPreviewLinesOnHostRows(t *testing.T) {
+	const height = frameChrome + 3
 	m := newModel(Options{Hosts: parsedCorpus(t, 30), Theme: theme.Default(), ShowPreview: true})
-	out := stripANSI(renderAt(m, 5))
-	if got := lineCount(out); got != 5 {
-		t.Errorf("a 5-line pane rendered %d lines; the pane is not being filled:\n%s", got, out)
+	out := stripANSI(renderAt(m, height))
+	if got := lineCount(out); got != height {
+		t.Errorf("a %d-line pane rendered %d lines; the pane is not being filled:\n%s", height, got, out)
 	}
 	for _, want := range []string{"host00", "host01"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("%q missing from a 5-line pane with the preview shed:\n%s", want, out)
+			t.Errorf("%q missing from a %d-line pane with the preview shed:\n%s", want, height, out)
 		}
 	}
 }
@@ -887,18 +948,58 @@ func TestViewShowsMoreRowsInATallerPane(t *testing.T) {
 // TestViewInATallPaneMatchesTheUnsizedFallback pins both the maxRows ceiling and
 // the height == 0 fallback in one assertion, without a magic line count. It is
 // what makes this change a fix for short panes only: given room to spare, the
-// output is byte-identical to what the picker drew before it consulted height
-// at all.
+// picker draws what it drew before it consulted height at all.
+//
+// Compared through boxedRows rather than as one string, because the two frames
+// are no longer byte-identical and cannot be: the box sizes itself to the pane
+// when there is one and to its own widest line when there is not, so the tall
+// frame is padded out to testWidth and the unsized frame is not. Discarding the
+// width is what isolates the height behavior this test is about from the width
+// behavior TestTheBoxFillsThePaneExactly owns.
 func TestViewInATallPaneMatchesTheUnsizedFallback(t *testing.T) {
 	m := newModel(Options{Hosts: manyHosts(30), Theme: theme.Default(), ShowPreview: true})
 	unsized := m.View().Content // no WindowSizeMsg yet, so height is 0
-	if tall := renderAt(m, 200); tall != unsized {
-		t.Errorf("a 200-line pane and the unsized first frame differ\ntall:\n%s\nunsized:\n%s",
-			stripANSI(tall), stripANSI(unsized))
+	tall := renderAt(m, 200)
+
+	gotLines, wantLines := boxedRows(tall), boxedRows(unsized)
+	if len(gotLines) != len(wantLines) {
+		t.Fatalf("a 200-line pane drew %d lines and the unsized first frame %d\ntall:\n%s\nunsized:\n%s",
+			len(gotLines), len(wantLines), stripANSI(tall), stripANSI(unsized))
+	}
+	for i := range gotLines {
+		if gotLines[i] != wantLines[i] {
+			t.Errorf("line %d differs between a 200-line pane and the unsized first frame:\ntall:     %q\nunsized:  %q",
+				i, gotLines[i], wantLines[i])
+		}
 	}
 	if !strings.Contains(stripANSI(unsized), "… 18 off screen") {
 		t.Errorf("unsized fallback did not render maxRows rows:\n%s", stripANSI(unsized))
 	}
+}
+
+// boxedRows is a frame's content lines with everything the box's width decides
+// discarded: the border rows, the rule, the blank lines, the walls, and the
+// padding lipgloss added to reach the right-hand one.
+//
+// What is left is the line the picker composed, which is what two frames of
+// different widths can be compared on. The styling goes with it — these are
+// plain text — so a caller comparing two frames through this is asserting about
+// their rows and not about their colors.
+func boxedRows(frame string) []string {
+	var out []string
+	for _, l := range frameLines(frame) {
+		p := stripANSI(l)
+		if !strings.HasPrefix(p, "│") {
+			continue // a border row: nothing but width
+		}
+		p = strings.TrimPrefix(p, "│")
+		p = strings.TrimRight(strings.TrimSuffix(p, "│"), " ")
+		if strings.Trim(p, "─ ") == "" {
+			continue // the rule, or a blank line: also nothing but width
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // TestViewOverflowNoticeCountsHostsInBothDirections is why the notice names no
@@ -1002,7 +1103,7 @@ func TestWideHostsFixtureRendersEveryKindOfLine(t *testing.T) {
 		// The ellipsis rather than the notice's wording: the count's phrasing is
 		// a separate change and this assertion is about the line existing.
 		{"the overflow notice", "…"},
-		{"the preview separator", "─────"},
+		{"the preview separator", previewSeparator},
 		{"a preview field", "HostName"},
 		{"the key hints", "esc close"},
 		{"a warning line", "/cfg/alpha/fragment_00.conf"},
@@ -1119,14 +1220,17 @@ func escapesIntact(s string) bool {
 // a half-written sequence merely eats the text after it and the content
 // assertions stay green. So this asserts on the styled bytes.
 //
-// Width 12 cuts four columns of chrome plus eight of the alias, which lands
-// inside the run of unmatched runes after the highlighted "alpha" — a cut
-// through styled text, not between two styled pieces.
+// The content width is 12: four columns of row chrome plus eight of the alias,
+// which lands inside the run of unmatched runes after the highlighted "alpha" —
+// a cut through styled text, not between two styled pieces. The pane is boxCols
+// wider so that the box's border and padding leave exactly that, which is what
+// clampToWidth cuts to.
 func TestViewTruncationKeepsEscapeSequencesIntact(t *testing.T) {
-	const width = 12
+	const width = 12 + boxCols
 	th := theme.Default()
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Accent)).Bold(true)
-	requireStyling(t, accent)
+	// The cursor row is banded, so its highlight is an underline on the band.
+	_, hit := bandStyles(th)
+	requireStyling(t, hit)
 
 	m := typeRunes(newModel(Options{Hosts: wideHosts(3), Theme: th, ShowPreview: true}), "alpha")
 	for i, l := range frameLines(renderSized(m, width, 24)) {
@@ -1142,13 +1246,15 @@ func TestViewTruncationKeepsEscapeSequencesIntact(t *testing.T) {
 	// The highlighted run survives the cut whole. A truncation that dropped
 	// escapes rather than copying them through would leave the same plain text
 	// with no styling on it, which stripANSI cannot tell apart.
-	if want := accent.Render("alpha"); !strings.Contains(row, want) {
+	if want := hit.Render("alpha"); !strings.Contains(row, want) {
 		t.Errorf("the truncated cursor row lost the highlight on the matched runes; missing %q in %q", want, row)
 	}
 	// And it does not leave the terminal styled: the escapes past the cut are
-	// copied through, so the closing reset is still there.
-	if !strings.HasSuffix(row, "\x1b[m") {
-		t.Errorf("the truncated cursor row does not end in a reset, so the styling bleeds: %q", row)
+	// copied through, so the closing reset is still there. Checked on the last
+	// cell rather than the line's final bytes, because the box's own border
+	// closes itself and every line ends in a reset whatever the content did.
+	if lastCellReversed(row) {
+		t.Errorf("the truncated cursor row leaves the band open across the box's wall: %q", row)
 	}
 
 	// The control. A byte slice of the same row at the same number is what a
@@ -1200,7 +1306,7 @@ func TestViewNeverExceedsTheReportedHeightInANarrowPane(t *testing.T) {
 	} {
 		m := newModel(Options{Hosts: wideHosts(30), Theme: th, ShowPreview: tc.preview})
 		for _, w := range []int{20, 40, 60} {
-			for h := 1; h <= 24; h++ {
+			for h := 1; h <= sweepHeight; h++ {
 				if widest := lipgloss.Width(renderSized(m, 0, h)); widest <= w {
 					t.Fatalf("%s: at height %d the widest line is %d columns, which fits a "+
 						"%d-column pane; nothing here can wrap", tc.name, h, widest, w)
@@ -1290,16 +1396,18 @@ func TestViewKeepsTheHostNameHighlightAlignedUnderAUserPrefix(t *testing.T) {
 	}
 
 	raw := renderRaw(typeRunes(newModel(Options{Hosts: hosts, Theme: th}), "example"))
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color(th.Accent)).Bold(true)
-	requireStyling(t, accent)
+	// The one host is the cursor row, so the match is underlined on the band
+	// rather than accented. Where it lands is the subject here either way.
+	band, hit := bandStyles(th)
+	requireStyling(t, band)
 
-	if want := accent.Render("example"); !strings.Contains(raw, want) {
-		t.Errorf("the matched hostname runes are not accented; missing %q in:\n%q", want, raw)
+	if want := hit.Render("example"); !strings.Contains(raw, want) {
+		t.Errorf("the matched hostname runes are not highlighted; missing %q in:\n%q", want, raw)
 	}
 	// The shifted reading, named exactly: seven runes starting five to the left
 	// of "example" once "root@" is counted as part of the styled string.
-	if bad := accent.Render("@dev.ex"); strings.Contains(raw, bad) {
-		t.Errorf("the highlight is offset by the user prefix; %q is accented in:\n%q", bad, raw)
+	if bad := hit.Render("@dev.ex"); strings.Contains(raw, bad) {
+		t.Errorf("the highlight is offset by the user prefix; %q is highlighted in:\n%q", bad, raw)
 	}
 	if plain := stripANSI(raw); !strings.Contains(plain, "root@dev.example.com") {
 		t.Errorf("detail column text changed; want root@dev.example.com in:\n%s", plain)
