@@ -18,11 +18,19 @@ const (
 	downMarker  = "○" // no answer
 	skipMarker  = "~" // ProxyJump, deliberately not probed
 	blankMarker = " " // not probed yet
-	// maxRows is the ceiling on host rows, not the count. A short pane gets
-	// fewer — see visibleRows. It stays a ceiling so the picker remains the
-	// floating box the spec calls it rather than growing into a full-screen
-	// list in a tall terminal.
-	maxRows = 12
+	// fallbackRows is how many host rows to draw before a WindowSizeMsg has
+	// reported a height. Only then — see visibleRows, which otherwise fills
+	// whatever the pane gives it.
+	//
+	// This was a ceiling, applied at every height, on the reasoning that the
+	// picker should stay a floating box rather than grow into a full-screen
+	// list. The reasoning assumed the picker chooses its own size. It does
+	// not: herdr sizes the popup from width/height on the keybinding, and the
+	// plugin is handed the pane that results. A ceiling under that pane does
+	// not make the box smaller, it makes the box emptier — at the operator's
+	// 60% binding it left two thirds of the popup void. The size is the
+	// operator's to set in their config; filling it is this package's job.
+	fallbackRows = 12
 	// maxWarnings is the ceiling on warning lines in the footer. The count is
 	// unbounded — loadHosts emits one per unreadable include — and unlike the
 	// preview the footer never yields, so every line here is a host row the
@@ -90,19 +98,22 @@ func previewFields(h sshconfig.Host) []string {
 	return lines
 }
 
-// fixedChrome counts the lines View draws whatever the height is: the box, the
-// title block, the footer, and the warning block when there is one. These do
-// not yield. The title is the operator's own typing echoed back, the hints are
-// the only discoverability the picker has, a warning is the only account of a
-// host the operator can see in their own config and cannot see here, and the
-// border is the only thing that says where the popup ends.
+// fixedChrome counts the lines View draws whatever the height is: the title
+// block, the footer, and the warning block when there is one. These do not
+// yield. The title is the operator's own typing echoed back, the hints are the
+// only discoverability the picker has, and a warning is the only account of a
+// host the operator can see in their own config and cannot see here.
 //
 // This is the one lever the whole height budget hangs off — visibleRows and
-// previewLines both subtract it — so the box's cost is spelled out as named
-// constants rather than folded into a number. TestFixedChromeCountsWhatTheBoxDraws
-// asserts the total against what the frame actually emits.
+// previewLines both subtract it — so the frame's cost is spelled out as named
+// constants rather than folded into a number.
+// TestFixedChromeCountsWhatTheFrameDraws asserts the total against what the
+// frame actually emits, which is the check that caught the frame outrunning
+// this by one when the border came off: box() had been trimming View's
+// trailing newline, and without it the empty line after it was a real screen
+// row that nothing here budgeted for.
 func (m model) fixedChrome() int {
-	return boxRows + headerRows + footerRows + m.warningLines()
+	return headerRows + footerRows + m.warningLines()
 }
 
 // warningLines is how many footer lines the warnings occupy: one per warning up
@@ -179,16 +190,16 @@ func (m model) chromeLines() int { return m.fixedChrome() + m.previewLines() }
 // visibleRows is how many host rows fit in the terminal height the last
 // WindowSizeMsg reported, once chrome has taken its share. The picker is a
 // floating overlay, so an oversized frame is not a scroll the operator can use.
+//
+// There is no ceiling over this: the pane herdr hands the popup is the bound,
+// and a second one under it only leaves the box half empty. See fallbackRows.
 func (m model) visibleRows() int {
 	if m.height <= 0 {
-		// No WindowSizeMsg has arrived yet. Fall back to the ceiling rather
-		// than rendering an empty list on the first frame.
-		return maxRows
+		// No WindowSizeMsg has arrived yet. Draw a plausible list rather than
+		// an empty one on the first frame.
+		return fallbackRows
 	}
 	n := m.height - m.chromeLines() - m.noticeReserve()
-	if n > maxRows {
-		n = maxRows
-	}
 	if n < 1 {
 		// A picker showing zero hosts is worse than one that overflows, so the
 		// floor wins over the fit. fixedChrome + one row + the notice is the
@@ -202,11 +213,11 @@ func (m model) visibleRows() int {
 func (m model) View() tea.View {
 	s := newStyles(m.opts.Theme)
 
-	// The body first, then the rule, because the rule's width is the box's and
-	// on the first frame — before any WindowSizeMsg — the box's width is
-	// whatever its widest line turns out to be. Assembling in this order is
-	// what lets the rule reach both walls then instead of stopping short.
-	title := fmt.Sprintf("%s %s", s.accent.Render("ssh"), s.text.Render(m.query+"▏"))
+	// The body first, then the rule, because on the first frame — before any
+	// WindowSizeMsg — the rule has no pane width to span and falls back to the
+	// frame's widest line. Assembling in this order is what lets it reach both
+	// edges then instead of stopping short.
+	title := frameIndent + fmt.Sprintf("%s %s", s.accent.Render("ssh"), s.text.Render(m.query+"▏"))
 
 	var body strings.Builder
 	switch {
@@ -223,7 +234,7 @@ func (m model) View() tea.View {
 	}
 
 	body.WriteString("\n")
-	body.WriteString(renderHints(s) + "\n")
+	body.WriteString(frameIndent + renderHints(s) + "\n")
 	body.WriteString(m.renderWarnings(s))
 
 	w := m.innerWidth()
@@ -237,14 +248,18 @@ func (m model) View() tea.View {
 	frame.WriteString("\n")
 	frame.WriteString(body.String())
 
+	// Every line above is newline-terminated, which would leave the frame
+	// ending in a blank line — a real screen row, and one fixedChrome does not
+	// count. box() used to trim it as a side effect of wrapping the content;
+	// with no box the trim has to be stated.
+	//
 	// Leave AltScreen and MouseMode at their zero values: the popup is already
 	// a modal of its own, and the picker is keyboard-only.
-	return tea.NewView(m.box(m.clampToWidth(frame.String()), s.border))
+	return tea.NewView(m.clampToWidth(strings.TrimSuffix(frame.String(), "\n")))
 }
 
-// clampToWidth truncates every line of the assembled content to the width
-// inside the border. box applies the same cut to the finished frame at the pane
-// width; between them they are the only places a width is read.
+// clampToWidth truncates every line of the assembled frame to the pane width.
+// It is the only place a width is read on the way to the screen.
 //
 // Width is a height problem. The picker renders inline rather than in an
 // alternate screen, so the renderer sizes the frame to its content instead of
@@ -265,12 +280,12 @@ func (m model) View() tea.View {
 // tea.WindowSizeMsg arrives, and a clamp to 0 would draw the first frame as
 // nothing at all.
 //
-// The guard in clampLines is defensive rather than load-bearing today, and
-// deleting it is the one change here no test catches: lipgloss applies MaxWidth
-// only when it is > 0, so the clamp is already a no-op at a zero or negative
-// width. Keep it anyway. It states the contract where the width is read instead
-// of borrowing it from a library, and it is the difference between a correct
-// first frame and an empty one the moment the truncation primitive changes.
+// The w <= 0 guard is defensive rather than load-bearing today, and deleting it
+// is the one change here no test catches: lipgloss applies MaxWidth only when it
+// is > 0, so the clamp is already a no-op at a zero or negative width. Keep it
+// anyway. It states the contract where the width is read instead of borrowing it
+// from a library, and it is the difference between a correct first frame and an
+// empty one the moment the truncation primitive changes.
 //
 // The cutting is lipgloss's MaxWidth, which per line delegates to
 // ansi.Truncate. Two properties are load-bearing and neither is true of a byte
@@ -283,31 +298,23 @@ func (m model) View() tea.View {
 // Rendering line by line rather than handing the whole frame to a single Render
 // call is deliberate: lipgloss also runs horizontal alignment on a multi-line
 // render, which pads every short line out to the longest one.
-func (m model) clampToWidth(frame string) string {
-	// innerWidth, not m.width: this runs on the content, before box wraps it in
-	// a border and a column of padding on each side. Clamping to the pane width
-	// here would let every line overhang the box by the four columns the frame
-	// itself occupies, and lipgloss would soft-wrap each one into a second row —
-	// which is the overflow the height budget cannot see.
-	return clampLines(frame, m.innerWidth())
-}
-
-// clampLines truncates every line of s to w display columns, or returns s
-// unchanged when w is not positive.
 //
-// Split out from clampToWidth because box needs the same cutting at a different
-// width: the content is clamped to the width inside the border, and the
-// finished box to the pane. One implementation rather than two, so the escape
-// handling above is stated once.
-func clampLines(s string, w int) string {
+// This was two functions until the frame stopped drawing a border. The content
+// was clamped to the width inside that border and the finished box to the pane,
+// which were two different widths and so needed one shared implementation.
+// There is one width now — the frame draws inside herdr's border, not its own —
+// so there is one clamp.
+func (m model) clampToWidth(frame string) string {
+	w := m.innerWidth()
 	if w <= 0 {
-		return s
+		return frame
 	}
 	clamp := lipgloss.NewStyle().MaxWidth(w)
-	// Every line View emits is newline-terminated, so the final element here is
-	// the empty string after the trailing newline. Clamping it yields itself,
-	// and rejoining restores the frame's exact line structure.
-	lines := strings.Split(s, "\n")
+	// Split rather than a single Render so each line is cut on its own, and
+	// rejoined so the frame's line structure comes back exactly. An empty line
+	// clamps to itself, so a frame that does end in a newline is not a case to
+	// handle separately.
+	lines := strings.Split(frame, "\n")
 	for i, l := range lines {
 		lines[i] = clamp.Render(l)
 	}
@@ -425,7 +432,18 @@ func (m model) renderRows(s styles) string {
 			// the connection actually reaches.
 			detail = dim.Render("via " + h.ProxyJump)
 		}
-		line := fmt.Sprintf("%s%s %s  %s", pointer, style.Render(marker), alias, detail)
+		// The gaps between the columns are rendered rather than written as bare
+		// spaces, because on the banded row a bare space is a hole. Reverse
+		// video only reaches the cells a style actually renders, so an unstyled
+		// separator draws in the terminal's own background — and the band came
+		// out as three green blocks with black slots between them instead of
+		// one bar. bar() padding the right-hand end could not show this: the
+		// holes are interior.
+		gap := s.text
+		if selected {
+			gap = s.chip
+		}
+		line := pointer + style.Render(marker) + gap.Render(" ") + alias + gap.Render("  ") + detail
 		if selected {
 			line = bar(line, m.innerWidth(), s.chip)
 		}

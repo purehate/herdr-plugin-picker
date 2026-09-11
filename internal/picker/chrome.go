@@ -1,35 +1,47 @@
 package picker
 
 import (
-	"image/color"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/purehate/herdr-plugin-ssh/internal/theme"
 )
 
-// chrome.go is the frame the picker sits in: the border, the title's rule, the
-// footer's key hints, and the band under the cursor row. view.go stays about
-// the content that goes inside it.
+// chrome.go is the frame the picker sits in: the title's rule, the footer's key
+// hints, and the band under the cursor row. view.go stays about the content that
+// goes inside it.
 //
 // The shape is herdr's own settings dialog, which is the floating box the
-// operator already recognises on this terminal: a single-line border, a title,
-// a rule under it, the list, and a footer whose primary action is an inverted
-// chip. Matching it is not decoration. The picker is a popup keybinding now,
-// and a popup with no border has no edge — nothing on screen says where the
-// modal stops and the pane behind it starts.
+// operator already recognises on this terminal: a title, a rule under it, the
+// list with the selected row as a full-width band, and a footer whose primary
+// action is an inverted chip.
+//
+// It deliberately draws no border of its own, which is a reversal. A border was
+// added here on the reasoning that a popup with no edge has nothing saying where
+// the modal stops — and that reasoning was sound and the premise was wrong.
+// herdr already draws the popup its own bordered chrome, labelled "popup", in
+// the accent color. Drawing a second one inside it produced two concentric
+// boxes a single cell apart, which is what the settings dialog does not look
+// like. There is no setting to suppress herdr's: `herdr --default-config`
+// documents `type`, `command`, `width` and `height` for a popup keybinding and
+// nothing about its frame.
+//
+// So the border below is herdr's, and everything here draws inside it. The
+// indentation each line carries is what keeps content off that border; the
+// band is the one thing that deliberately runs the full width and touches it,
+// the way the settings dialog's selected row does.
 
 const (
-	// boxRows is what the border costs the pane's height: its top and bottom.
-	boxRows = 2
-	// boxCols is what it costs the width: two border columns plus the one
-	// column of padding inside each of them.
-	boxCols = 4
 	// headerRows is the title line, the rule under it, and the blank line that
 	// separates the rule from the first host row.
 	headerRows = 3
 	// footerRows is the blank line above the key hints plus the hints.
 	footerRows = 2
+	// frameIndent is the column the title and the key hints start at, so they
+	// clear herdr's popup border instead of sitting against it. Host rows,
+	// the preview and the overflow notice already carry two columns of their
+	// own and are not indented again — the pointer gutter is that indent.
+	frameIndent = " "
 )
 
 // styles is the palette one frame renders with, resolved from the theme once
@@ -50,9 +62,6 @@ type styles struct {
 	// having to learn what the operator's background color is — and the theme
 	// loader only reads [theme].name and [ui].accent, so it could not tell it.
 	chip lipgloss.Style
-	// border is the box's edge, a color rather than a style because lipgloss
-	// takes it through BorderForeground.
-	border color.Color
 }
 
 func newStyles(t theme.Theme) styles {
@@ -63,68 +72,32 @@ func newStyles(t theme.Theme) styles {
 		muted:  lipgloss.NewStyle().Foreground(lipgloss.Color(t.Muted)),
 		up:     lipgloss.NewStyle().Foreground(lipgloss.Color(t.Up)),
 		chip:   lipgloss.NewStyle().Foreground(accent).Reverse(true),
-		border: lipgloss.Color(t.Muted),
 	}
 }
 
-// innerWidth is the width available to content: the pane less the border and
-// its padding.
+// innerWidth is the width available to content, which is the whole pane: the
+// frame draws inside herdr's popup border rather than one of its own, so no
+// columns are spent on a border here.
 //
-// Zero means "no usable content width", and every caller reads it the same way
-// — clampToWidth as "do not clamp", bar as "do not pad", and box as "size
-// yourself to your widest line". That is the convention m.width already used
-// for the frame before the first WindowSizeMsg, kept rather than replaced with
-// a guessed default, because a guess would be wrong for exactly one frame and
-// visibly so.
+// Zero means "no width reported yet", and every caller reads it the same way —
+// clampToWidth as "do not clamp", bar as "do not pad", and the rule as "span
+// your widest line". That is the convention m.width already used before the
+// first WindowSizeMsg, kept rather than replaced with a guessed default,
+// because a guess would be wrong for exactly one frame and visibly so.
 //
-// A pane of four columns or fewer resolves to it as well, and there the
-// fallback is not cosmetic: the border and its padding are those four columns,
-// so there is no content width left to clamp to. box's own clamp is what keeps
-// the frame inside a pane that small. There is deliberately no floor under
-// this. A floor would be a frame wider than the pane, every line of it would
-// soft-wrap into a second screen row, and the height budget counts logical
-// lines and cannot see that — the width invariant is a height invariant.
+// There is deliberately no floor under this. A floor would be a frame wider
+// than the pane, every line of it would soft-wrap into a second screen row, and
+// the height budget counts logical lines and cannot see that — the width
+// invariant is a height invariant.
 func (m model) innerWidth() int {
-	if m.width <= boxCols {
+	if m.width < 0 {
 		return 0
 	}
-	return m.width - boxCols
-}
-
-// box draws the border around the assembled content.
-//
-// Width is handed the whole pane width, not the content width: in lipgloss v2 it
-// is the width of the finished block, border columns and padding included, so
-// the content ends up boxCols narrower than whatever is passed. Handing it the
-// content width draws a box two columns short of the pane and — worse —
-// soft-wraps every line clampToWidth cut to the wider figure, doubling the
-// frame's height. Measured against the library rather than reasoned from the
-// name, and pinned by TestTheBoxFillsThePaneExactly.
-func (m model) box(content string, border color.Color) string {
-	style := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(border).
-		Padding(0, 1)
-	if w := m.innerWidth(); w > 0 {
-		style = style.Width(w + boxCols)
-	}
-	// Every line the content builder emits is newline-terminated, and lipgloss
-	// draws the empty string after the last newline as a row of its own — an
-	// empty line inside the box, above the bottom border.
-	out := style.Render(strings.TrimSuffix(content, "\n"))
-	// The box is the one thing clampToWidth cannot cover, because it runs before
-	// the border exists. It needs its own clamp for the panes too narrow to hold
-	// a box at all: lipgloss ignores a Width that leaves no room for the border
-	// and the padding — measured, every value from 1 to 4 renders content-sized
-	// — so at five columns or fewer the frame comes back wider than the pane and
-	// would wrap. Cutting the right-hand border off is the honest outcome there;
-	// a wrapped frame would double the height instead, and the height is what
-	// the operator loses the host list to.
-	return clampLines(out, m.width) + "\n"
+	return m.width
 }
 
 // rule is the divider under the title. It spans the whole content width because
-// a separator shorter than the box reads as a piece of content rather than a
+// a separator shorter than the frame reads as a piece of content rather than a
 // division.
 func rule(w int, muted lipgloss.Style) string {
 	if w < 1 {

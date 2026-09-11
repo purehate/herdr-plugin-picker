@@ -48,16 +48,20 @@ func renderSized(m model, width, height int) string {
 // nothing they render is truncated — see renderSized.
 const testWidth = 90
 
-// lineCount counts rendered lines. Every line View emits is newline-terminated,
-// so this is the count of lines the terminal is asked to draw — deliberately not
-// len(strings.Split(...)), which is one greater because of the empty element
-// after the trailing newline.
+// lineCount counts the lines the terminal is asked to draw, which is exactly
+// len(frameLines) and is defined as such so the two can never disagree.
+//
+// It was strings.Count(s, "\n"), which was right only while every frame ended
+// in a newline: View trims that now, so counting separators undercounted every
+// frame by one and did it silently — the tests that caught it were the ones
+// asserting an exact total, and the ones asserting "taller pane draws more"
+// were off by one in both terms and never noticed.
 //
 // It counts *logical* lines, which is exactly the blind spot the width clamp
 // exists to close: a line wider than the pane counts as one here and draws as
 // two on screen. Use screenRows where the assertion is about rows the terminal
 // draws rather than lines View emitted.
-func lineCount(s string) int { return strings.Count(s, "\n") }
+func lineCount(s string) int { return len(frameLines(s)) }
 
 // screenRows is lineCount corrected for soft wrap: the number of rows a
 // terminal that wide actually draws the frame into. A line of w display columns
@@ -67,12 +71,21 @@ func lineCount(s string) int { return strings.Count(s, "\n") }
 //
 // Display columns, not bytes or runes: the frame is full of escape sequences
 // that occupy no columns at all, and len() would count every one of them.
+//
+// It deliberately does not trim a trailing newline, which frameLines and
+// lineCount both do. Those answer "what lines did View compose", and a phantom
+// empty element is noise in that answer. This one answers "how tall is this on
+// screen", and a frame ending in a newline really does occupy one more row than
+// its content — a row nothing in fixedChrome budgets for. Trimming it here made
+// every height-invariant test in this file blind to exactly that, which is how
+// the frame came to outrun its own budget by one the moment box() stopped
+// trimming the newline on View's behalf.
 func screenRows(s string, width int) int {
 	if s == "" {
 		return 0
 	}
 	rows := 0
-	for _, l := range strings.Split(strings.TrimSuffix(s, "\n"), "\n") {
+	for _, l := range strings.Split(s, "\n") {
 		w := lipgloss.Width(l)
 		if width <= 0 || w <= width {
 			rows++
@@ -439,14 +452,13 @@ func TestViewFooterIsAbsentWithoutWarnings(t *testing.T) {
 	m := newModel(Options{Hosts: manyHosts(3), Theme: theme.Default()})
 	out := stripANSI(renderSized(m, 200, 30))
 	lines := frameLines(renderSized(m, 200, 30))
-	// The last line is the box's bottom border now, so the hints are the line
-	// above it. Asserting on the true last line would only re-assert that the
-	// box closes, which TestTheFrameIsBoxed already does.
-	if last := stripANSI(lines[len(lines)-2]); !strings.Contains(last, "esc close") {
-		t.Errorf("the frame's last content line is %q, want the key hints; something was drawn below them:\n%s", last, out)
+	// The hints are the true last line: the frame draws no bottom border, and
+	// View trims the newline after them rather than leaving a blank row below.
+	if last := stripANSI(lines[len(lines)-1]); !strings.Contains(last, "esc close") {
+		t.Errorf("the frame's last line is %q, want the key hints; something was drawn below them:\n%s", last, out)
 	}
 	if got, want := len(lines), frameChrome+3; got != want {
-		t.Errorf("frame is %d lines, want %d — the box, the title block, three hosts, and the footer:\n%s", got, want, out)
+		t.Errorf("frame is %d lines, want %d — the title block, three hosts, and the footer:\n%s", got, want, out)
 	}
 }
 
@@ -771,20 +783,21 @@ func parsedCorpus(t *testing.T, n int) []sshconfig.Host {
 }
 
 // frameChrome is what View draws at every height before any warnings: the
-// border's two rows, the title block's three — title, rule, blank — and the
-// footer's two. It is fixedChrome with no warnings, spelled out from the same
-// constants rather than written down as a number, because every floor and every
-// discriminating height in this file is derived from it and they all have to
-// move together when the frame changes shape. They did not, once: the box added
-// five lines and nineteen tests here failed at the same time.
-const frameChrome = boxRows + headerRows + footerRows
+// title block's three lines — title, rule, blank — and the footer's two. It is
+// fixedChrome with no warnings, spelled out from the same constants rather than
+// written down as a number, because every floor and every discriminating height
+// in this file is derived from it and they all have to move together when the
+// frame changes shape. They did not, once: the frame gained five lines and
+// nineteen tests here failed at the same time, which is what these constants
+// exist to stop happening twice.
+const frameChrome = headerRows + footerRows
 
 // minFrame is the frame that cannot shrink: frameChrome, one host row, and the
 // overflow notice. The preview yields all the way to nothing, but those lines
 // have nowhere left to go, so below this height the frame stops shrinking and
 // stays put rather than growing. Showing the operator zero hosts, hiding the
-// keys that dismiss the picker, or dropping the border that says where the
-// popup ends would all be worse than a line of overflow in a pane this small.
+// keys that dismiss the picker would both be worse than a line of overflow in
+// a pane this small.
 //
 // It has no warning term because every case below has more than one host and no
 // warnings. A fixture with warnings needs warningLines() on top.
@@ -945,41 +958,56 @@ func TestViewShowsMoreRowsInATallerPane(t *testing.T) {
 	}
 }
 
-// TestViewInATallPaneMatchesTheUnsizedFallback pins both the maxRows ceiling and
-// the height == 0 fallback in one assertion, without a magic line count. It is
-// what makes this change a fix for short panes only: given room to spare, the
-// picker draws what it drew before it consulted height at all.
+// TestViewInATallPaneShowsEveryHost is the operator-visible half of removing the
+// row ceiling. A 200-line pane holding 30 hosts has room for all of them, so all
+// of them are drawn and there is nothing left to put a notice about.
 //
-// Compared through boxedRows rather than as one string, because the two frames
-// are no longer byte-identical and cannot be: the box sizes itself to the pane
-// when there is one and to its own widest line when there is not, so the tall
-// frame is padded out to testWidth and the unsized frame is not. Discarding the
-// width is what isolates the height behavior this test is about from the width
-// behavior TestTheBoxFillsThePaneExactly owns.
-func TestViewInATallPaneMatchesTheUnsizedFallback(t *testing.T) {
-	m := newModel(Options{Hosts: manyHosts(30), Theme: theme.Default(), ShowPreview: true})
-	unsized := m.View().Content // no WindowSizeMsg yet, so height is 0
+// This test used to assert the opposite, and did it as "a tall pane matches the
+// unsized first frame" — true only because the ceiling made both frames 12 rows,
+// which is the same coincidence that let two thirds of the operator's popup
+// render as void. The two facts it yoked together are now separate, and
+// TestViewUnsizedFallsBackToAPlausibleList owns the other one.
+//
+// Asserted through boxedRows so the width is discarded: a tall frame is padded
+// out to testWidth and the host count is what this is about.
+func TestViewInATallPaneShowsEveryHost(t *testing.T) {
+	const hosts = 30
+	m := newModel(Options{Hosts: manyHosts(hosts), Theme: theme.Default(), ShowPreview: true})
 	tall := renderAt(m, 200)
 
-	gotLines, wantLines := boxedRows(tall), boxedRows(unsized)
-	if len(gotLines) != len(wantLines) {
-		t.Fatalf("a 200-line pane drew %d lines and the unsized first frame %d\ntall:\n%s\nunsized:\n%s",
-			len(gotLines), len(wantLines), stripANSI(tall), stripANSI(unsized))
-	}
-	for i := range gotLines {
-		if gotLines[i] != wantLines[i] {
-			t.Errorf("line %d differs between a 200-line pane and the unsized first frame:\ntall:     %q\nunsized:  %q",
-				i, gotLines[i], wantLines[i])
+	drawn := 0
+	for _, l := range boxedRows(tall) {
+		if strings.Contains(l, "host") {
+			drawn++
 		}
 	}
-	if !strings.Contains(stripANSI(unsized), "… 18 off screen") {
-		t.Errorf("unsized fallback did not render maxRows rows:\n%s", stripANSI(unsized))
+	if drawn != hosts {
+		t.Errorf("a 200-line pane drew %d of %d hosts; the pane is not being filled:\n%s",
+			drawn, hosts, stripANSI(tall))
+	}
+	if strings.Contains(stripANSI(tall), "off screen") {
+		t.Errorf("a 200-line pane fits every host but still drew an overflow notice:\n%s", stripANSI(tall))
 	}
 }
 
-// boxedRows is a frame's content lines with everything the box's width decides
-// discarded: the border rows, the rule, the blank lines, the walls, and the
-// padding lipgloss added to reach the right-hand one.
+// TestViewUnsizedFallsBackToAPlausibleList covers the first frame, before any
+// WindowSizeMsg has reported a height. There is no pane to fill yet, so
+// visibleRows draws fallbackRows and the rest of the list overflows — 30 hosts
+// less 12 drawn is 18.
+//
+// The alternative was drawing nothing until the size arrives, which is one
+// frame of empty picker on every launch.
+func TestViewUnsizedFallsBackToAPlausibleList(t *testing.T) {
+	m := newModel(Options{Hosts: manyHosts(30), Theme: theme.Default(), ShowPreview: true})
+	unsized := stripANSI(m.View().Content) // no WindowSizeMsg yet, so height is 0
+	if !strings.Contains(unsized, "… 18 off screen") {
+		t.Errorf("unsized first frame did not draw fallbackRows rows:\n%s", unsized)
+	}
+}
+
+// boxedRows is a frame's content lines with everything the frame's width
+// decides discarded: the rule, the blank lines, and the trailing padding a
+// banded row carries out to the right edge.
 //
 // What is left is the line the picker composed, which is what two frames of
 // different widths can be compared on. The styling goes with it — these are
@@ -988,14 +1016,9 @@ func TestViewInATallPaneMatchesTheUnsizedFallback(t *testing.T) {
 func boxedRows(frame string) []string {
 	var out []string
 	for _, l := range frameLines(frame) {
-		p := stripANSI(l)
-		if !strings.HasPrefix(p, "│") {
-			continue // a border row: nothing but width
-		}
-		p = strings.TrimPrefix(p, "│")
-		p = strings.TrimRight(strings.TrimSuffix(p, "│"), " ")
+		p := strings.TrimRight(stripANSI(l), " ")
 		if strings.Trim(p, "─ ") == "" {
-			continue // the rule, or a blank line: also nothing but width
+			continue // the rule, or a blank line: nothing but width
 		}
 		out = append(out, p)
 	}
@@ -1021,10 +1044,10 @@ func TestViewOverflowNoticeCountsHostsInBothDirections(t *testing.T) {
 		t.Fatalf("cursor = %d, want 29; the window is not at the end of the list", m.cursor)
 	}
 
-	// Height 30 is past the maxRows ceiling, so the window is 12 rows and 18 of
-	// the 30 hosts are outside it.
+	// A 30-line pane spends 5 on chrome and 1 on the notice, leaving 24 rows for
+	// 30 hosts, so 6 are outside the window.
 	out := stripANSI(renderAt(m, 30))
-	if !strings.Contains(out, "… 18 off screen") {
+	if !strings.Contains(out, "… 6 off screen") {
 		t.Errorf("notice missing or miscounted:\n%s", out)
 	}
 	// The two assertions that make the count's meaning observable: the last host
@@ -1220,13 +1243,13 @@ func escapesIntact(s string) bool {
 // a half-written sequence merely eats the text after it and the content
 // assertions stay green. So this asserts on the styled bytes.
 //
-// The content width is 12: four columns of row chrome plus eight of the alias,
-// which lands inside the run of unmatched runes after the highlighted "alpha" —
-// a cut through styled text, not between two styled pieces. The pane is boxCols
-// wider so that the box's border and padding leave exactly that, which is what
-// clampToWidth cuts to.
+// The width is 12: four columns of row chrome plus eight of the alias, which
+// lands inside the run of unmatched runes after the highlighted "alpha" — a cut
+// through styled text, not between two styled pieces. The frame spends no
+// columns on a border, so the pane width and the content width are the same
+// number, and it is what clampToWidth cuts to.
 func TestViewTruncationKeepsEscapeSequencesIntact(t *testing.T) {
-	const width = 12 + boxCols
+	const width = 12
 	th := theme.Default()
 	// The cursor row is banded, so its highlight is an underline on the band.
 	_, hit := bandStyles(th)
@@ -1250,11 +1273,11 @@ func TestViewTruncationKeepsEscapeSequencesIntact(t *testing.T) {
 		t.Errorf("the truncated cursor row lost the highlight on the matched runes; missing %q in %q", want, row)
 	}
 	// And it does not leave the terminal styled: the escapes past the cut are
-	// copied through, so the closing reset is still there. Checked on the last
-	// cell rather than the line's final bytes, because the box's own border
-	// closes itself and every line ends in a reset whatever the content did.
-	if lastCellReversed(row) {
-		t.Errorf("the truncated cursor row leaves the band open across the box's wall: %q", row)
+	// copied through, so the closing reset is still there. Checked on the line's
+	// final sequence — see stylingLeaksPastEOL for why that became the sharp
+	// test once the frame stopped drawing a border of its own.
+	if stylingLeaksPastEOL(row) {
+		t.Errorf("the truncated cursor row leaves the band open past end of line: %q", row)
 	}
 
 	// The control. A byte slice of the same row at the same number is what a

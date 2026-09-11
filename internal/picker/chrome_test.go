@@ -86,45 +86,95 @@ func TestSGRParamsAreReadFromMergedSequences(t *testing.T) {
 	}
 }
 
-// TestTheFrameIsBoxed is the whole point of the file: a popup with no border
-// has no edge, so nothing on screen says where the modal stops and the pane
-// behind it starts. Asserted on the corner runes rather than on a screenshot,
-// because those are what make it a box.
-func TestTheFrameIsBoxed(t *testing.T) {
-	lines := frameLines(renderSized(boxedModel(), 60, 20))
-	if len(lines) < 3 {
-		t.Fatalf("frame has %d lines, too few to be a box:\n%s", len(lines), strings.Join(lines, "\n"))
-	}
-
-	first, last := stripANSI(lines[0]), stripANSI(lines[len(lines)-1])
-	if !strings.HasPrefix(first, "┌") || !strings.HasSuffix(first, "┐") {
-		t.Errorf("first line %q is not the top of a box", first)
-	}
-	if !strings.HasPrefix(last, "└") || !strings.HasSuffix(last, "┘") {
-		t.Errorf("last line %q is not the bottom of a box", last)
-	}
-	for i, l := range lines[1 : len(lines)-1] {
-		if s := stripANSI(l); !strings.HasPrefix(s, "│") || !strings.HasSuffix(s, "│") {
-			t.Errorf("line %d %q is not walled on both sides", i+1, s)
+// TestTheFrameDrawsNoBorderOfItsOwn guards a reversal, so it asserts an
+// absence. A border was added here on the reasoning that a popup with no edge
+// has nothing saying where the modal stops; the reasoning was sound and the
+// premise was false. herdr already wraps a popup in its own bordered chrome, so
+// this one drew a second box a single cell inside the first — two concentric
+// rectangles, which the operator caught in a screenshot and which is precisely
+// what the settings dialog this frame is modeled on does not look like.
+//
+// The corner and wall runes rather than a width check, because those are what
+// made it a box and a width check would pass either way. "─" is excluded on
+// purpose: the rule and the preview separator are made of it, so it is not
+// evidence of a border.
+func TestTheFrameDrawsNoBorderOfItsOwn(t *testing.T) {
+	frame := stripANSI(renderSized(boxedModel(), 60, 20))
+	for _, r := range []string{"┌", "┐", "└", "┘", "│"} {
+		if strings.Contains(frame, r) {
+			t.Errorf("the frame draws %q; herdr's popup chrome is the only border:\n%s", r, frame)
 		}
 	}
 }
 
-// TestTheBoxFillsThePaneExactly pins the width arithmetic, which is the part
-// that cannot be eyeballed: lipgloss's Width sets the block width including
-// padding, so the value handed to it is not the width the text gets. A box one
-// column too wide soft-wraps every line and doubles the frame's height; one
-// column too narrow leaves a ragged gap down the right of the popup.
+// bandRun reports how many of l's leading display cells are drawn with reverse
+// video, and how wide the line is. They are equal exactly when the band is one
+// unbroken bar from the first cell.
 //
-// Every line, not just the border rows, because the content lines are the ones
-// lipgloss pads and they are where an off-by-one shows up.
-func TestTheBoxFillsThePaneExactly(t *testing.T) {
-	for _, width := range []int{40, 60, 90, 120} {
-		frame := renderSized(boxedModel(), width, 20)
-		for i, l := range frameLines(frame) {
-			if got := lipgloss.Width(l); got != width {
-				t.Errorf("at pane width %d, line %d is %d cells:\n%q", width, i, got, stripANSI(l))
+// Leading run rather than a total count of reversed cells, because the defect
+// this exists for is interior. The cursor row is assembled from a pointer, a
+// marker, an alias and a detail column, and the gaps between them were written
+// as bare spaces: reverse video only reaches cells a style actually renders, so
+// those gaps drew in the terminal's own background and the band came out as
+// three green blocks with black slots between them. Every one of those cells is
+// still reversed, so a count would have matched; only the run breaks.
+func bandRun(l string) (run, total int) {
+	on, broken := false, false
+	for rest := l; rest != ""; {
+		loc := sgrSeq.FindStringIndex(rest)
+		text := rest
+		if loc != nil {
+			text = rest[:loc[0]]
+		}
+		if w := lipgloss.Width(text); w > 0 {
+			total += w
+			if on && !broken {
+				run += w
+			} else {
+				broken = true
 			}
+		}
+		if loc == nil {
+			break
+		}
+		switch seq := rest[loc[0]:loc[1]]; {
+		case hasReverse(seq):
+			on = true
+		case isSGRReset(seq):
+			on = false
+		}
+		rest = rest[loc[1]:]
+	}
+	return run, total
+}
+
+// TestTheCursorBandSpansThePane is the other half of matching the settings
+// dialog, whose selected row is one solid bar touching both edges.
+//
+// bar() padding the row out to the pane cannot show this on its own, which is
+// why the assertion walks cells: a row can reach the right edge and still be
+// full of holes.
+func TestTheCursorBandSpansThePane(t *testing.T) {
+	requireStyling(t, lipgloss.NewStyle().Reverse(true))
+	for _, width := range []int{40, 60, 90, 120} {
+		found := false
+		for _, l := range frameLines(renderSized(boxedModel(), width, 20)) {
+			if !strings.Contains(stripANSI(l), "▸") {
+				continue
+			}
+			found = true
+			run, total := bandRun(l)
+			if total != width {
+				t.Errorf("at pane width %d the cursor row is %d cells:\n%q", width, total, stripANSI(l))
+			}
+			if run != total {
+				t.Errorf("at pane width %d the band covers the first %d of %d cells, so it is broken by a gap:\n%q",
+					width, run, total, stripANSI(l))
+			}
+			break
+		}
+		if !found {
+			t.Fatalf("at pane width %d no row carries the cursor marker", width)
 		}
 	}
 }
@@ -194,44 +244,41 @@ func isSGRReset(seq string) bool {
 	return body == "" || body == "0"
 }
 
-// lastCellReversed reports whether reverse video was on when the terminal drew
-// the last printable cell of l.
+// stylingLeaksPastEOL reports whether l ends with a style still open, so the
+// terminal would carry it into the rest of the screen row and the line below.
 //
-// On a boxed line that cell is the right-hand wall, which is what makes this
-// the assertion below wants: a band left open runs past the content and paints
-// the wall in accent. Checking that the line *ends* in a reset would not — the
-// border style closes itself, so every line ends in one whether the band leaked
-// onto the wall or not.
-func lastCellReversed(l string) bool {
-	on, last := false, false
-	rest := l
-	for {
+// This replaced a check on whether the last printable cell was reversed, and the
+// premise inverted rather than the code being wrong. That cell used to be the
+// box's right-hand wall, so a band reaching it meant the band had leaked onto
+// the border. There is no border now — herdr draws the popup's, and the band is
+// *supposed* to run edge to edge the way the settings dialog's selected row does
+// — so reaching the last cell is the correct rendering and the old check failed
+// on it.
+//
+// The old doc rejected "ends in a reset" on the grounds that the border style
+// closed itself and so every line ended in one regardless. That was true, and it
+// is what the removal of the border undid: nothing supplies a trailing reset for
+// free any more, so the line ending in one is exactly the property, and the
+// failure it is watching for — ansi.Truncate cutting a banded row and copying
+// the opener through without its closer — shows up as a line whose last SGR
+// sequence is not a reset.
+func stylingLeaksPastEOL(l string) bool {
+	open := false
+	for rest := l; ; {
 		loc := sgrSeq.FindStringIndex(rest)
 		if loc == nil {
-			break
+			return open
 		}
-		if loc[0] > 0 {
-			last = on // printable cells preceded this sequence
-		}
-		switch seq := rest[loc[0]:loc[1]]; {
-		case hasReverse(seq):
-			on = true
-		case isSGRReset(seq):
-			on = false
-		}
+		open = !isSGRReset(rest[loc[0]:loc[1]])
 		rest = rest[loc[1]:]
 	}
-	if rest != "" {
-		last = on
-	}
-	return last
 }
 
 // TestABarRowClosesItsStyling guards the interaction between the bar and the
 // width clamp. clampToWidth cuts with ansi.Truncate, which copies escape
 // sequences through past the cut; a reverse-video row cut mid-line and left
-// open would paint the rest of the terminal row, and then the border on the
-// next line, in accent.
+// open would paint the rest of the terminal row, and then the line below it,
+// in accent — inside herdr's popup, where the picker does not own the pixels.
 //
 // Widths 30 and 40 are narrower than these rows, so the cut lands inside the
 // band rather than after it, which is the case the copy-through has to survive.
@@ -247,8 +294,8 @@ func TestABarRowClosesItsStyling(t *testing.T) {
 				continue
 			}
 			banded++
-			if lastCellReversed(l) {
-				t.Errorf("at width %d, line %d leaves the band open across the box's wall:\n%q", width, i, l)
+			if stylingLeaksPastEOL(l) {
+				t.Errorf("at width %d, line %d leaves the band open past end of line:\n%q", width, i, l)
 			}
 		}
 		// Without this the loop above passes by finding nothing to check, which
@@ -305,34 +352,34 @@ func TestThePrimaryActionIsAChip(t *testing.T) {
 }
 
 // TestTheRuleSpansTheContentWidth keeps the rule from being a stub. A separator
-// shorter than the box reads as a piece of content rather than a division.
+// shorter than the frame reads as a piece of content rather than a division.
+//
+// The rule is found by position rather than by content: it is the frame's
+// second line, directly under the title. Searching for a run of dashes would
+// find the preview separator too, and that one is deliberately short.
 func TestTheRuleSpansTheContentWidth(t *testing.T) {
 	for _, width := range []int{40, 90} {
-		var rule string
-		for _, l := range frameLines(renderSized(boxedModel(), width, 20)) {
-			// Walled, so the top border — which is nothing but ─ runes — cannot
-			// be mistaken for the rule and pass this by drawing itself.
-			plain := stripANSI(l)
-			if strings.HasPrefix(plain, "│") && strings.Contains(plain, "───") {
-				rule = plain
-				break
-			}
+		lines := frameLines(renderSized(boxedModel(), width, 20))
+		if len(lines) < 2 {
+			t.Fatalf("at width %d the frame has %d lines, too few to hold a rule", width, len(lines))
 		}
-		if rule == "" {
-			t.Fatalf("at width %d there is no rule under the title", width)
+		rule := stripANSI(lines[1])
+		if !strings.Contains(rule, "───") {
+			t.Fatalf("at width %d the line under the title is not a rule: %q", width, rule)
 		}
-		if got, want := strings.Count(rule, "─"), width-boxCols; got != want {
+		if got, want := strings.Count(rule, "─"), width; got != want {
 			t.Errorf("at pane width %d the rule is %d cells, want %d", width, got, want)
 		}
 	}
 }
 
-// TestFixedChromeCountsWhatTheBoxDraws is the reserve-against-draw pairing this
-// package already insists on for the preview and the warnings, applied to the
-// box. fixedChrome is what visibleRows subtracts, so a border and a rule that
-// draw more lines than it counts overflow the pane by exactly the difference —
-// and an overflowing popup is the failure the height budget exists to prevent.
-func TestFixedChromeCountsWhatTheBoxDraws(t *testing.T) {
+// TestFixedChromeCountsWhatTheFrameDraws is the reserve-against-draw pairing
+// this package already insists on for the preview and the warnings, applied to
+// the title block and the footer. fixedChrome is what visibleRows subtracts, so
+// a rule and a blank line that draw more lines than it counts overflow the pane
+// by exactly the difference — and an overflowing popup is the failure the
+// height budget exists to prevent.
+func TestFixedChromeCountsWhatTheFrameDraws(t *testing.T) {
 	m := newModel(Options{Hosts: manyHosts(30), Theme: theme.Default()})
 	const height = 20
 
@@ -355,17 +402,18 @@ func TestFixedChromeCountsWhatTheBoxDraws(t *testing.T) {
 	}
 }
 
-// TestTheBoxedFrameStillFitsThePane re-runs the overflow guard now that the
-// border, the rule and the two blank lines have been added to the frame. The
-// bound is on rows the terminal draws, not lines emitted, so an over-wide line
-// that soft-wraps is counted as the two rows it costs.
+// TestTheDialogFrameStillFitsThePane re-runs the overflow guard now that the
+// rule and the two blank lines have been added to the frame. The bound is on
+// rows the terminal draws, not lines emitted, so an over-wide line that
+// soft-wraps is counted as the two rows it costs.
 //
 // The sweep starts at minFrame because that is where fitting begins to be
-// possible: the box cost the irreducible frame five more lines than it had
-// before, and below it the picker overflows on purpose rather than hiding the
-// host list or the keys that dismiss it. minFrame itself is in the sweep, so a
-// frame that grew by one more line than the budget counts still fails here.
-func TestTheBoxedFrameStillFitsThePane(t *testing.T) {
+// possible: the title block and the footer cost the irreducible frame three
+// more lines than it had before, and below that the picker overflows on purpose
+// rather than hiding the host list or the keys that dismiss it. minFrame itself
+// is in the sweep, so a frame that grew by one more line than the budget counts
+// still fails here.
+func TestTheDialogFrameStillFitsThePane(t *testing.T) {
 	hosts := manyHosts(40)
 	for _, height := range []int{minFrame, 10, 12, 16, 20, 30} {
 		for _, width := range []int{40, 60, 90} {
@@ -377,24 +425,24 @@ func TestTheBoxedFrameStillFitsThePane(t *testing.T) {
 	}
 }
 
-// TestAnUnsizedFrameIsStillABox covers the first frame, before any
-// WindowSizeMsg. There is no pane width to fill then, so the box sizes itself
-// to its widest line — but it is still a box, and the rule still reaches both
-// walls. Getting this wrong is visible for one frame and looks like a crash.
-func TestAnUnsizedFrameIsStillABox(t *testing.T) {
+// TestAnUnsizedFrameStillRulesToItsWidestLine covers the first frame, before
+// any WindowSizeMsg. There is no pane width to span then, so the rule falls
+// back to the frame's widest line — and a rule that stopped at zero, or ran
+// past the content, is visible for that one frame and reads as a crash.
+//
+// This is why View assembles the body before the header: the fallback width is
+// not known until the body exists.
+func TestAnUnsizedFrameStillRulesToItsWidestLine(t *testing.T) {
 	frame := newModel(Options{
 		Hosts: []sshconfig.Host{{Alias: "alpha", HostName: "alpha.example", Port: "22"}},
 		Theme: theme.Default(),
 	}).View().Content
 
 	lines := frameLines(frame)
-	width := lipgloss.Width(lines[0])
-	for i, l := range lines {
-		if got := lipgloss.Width(l); got != width {
-			t.Errorf("unsized line %d is %d cells, want %d (the box is ragged):\n%q", i, got, width, stripANSI(l))
-		}
+	if len(lines) < 2 {
+		t.Fatalf("the unsized frame has %d lines, too few to hold a rule", len(lines))
 	}
-	if got, want := strings.Count(stripANSI(frame), "─"), 2*(width-2)+(width-boxCols); got != want {
-		t.Errorf("unsized frame has %d horizontal runes, want %d (border top and bottom plus the rule)", got, want)
+	if got, want := strings.Count(stripANSI(lines[1]), "─"), widestLine(frame); got != want {
+		t.Errorf("the unsized rule is %d cells and the widest line is %d:\n%s", got, want, stripANSI(frame))
 	}
 }
