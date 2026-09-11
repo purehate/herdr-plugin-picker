@@ -11,13 +11,49 @@ Link a local checkout:
 herdr plugin link ~/DEVELOPMENT/herdr-plugin-ssh
 ```
 
-Once this repo is published, the shorter route works too:
+Or install it from GitHub:
 
 ```bash
 herdr plugin install purehate/herdr-plugin-ssh
 ```
 
-Then bind a key in `~/.config/herdr/config.toml`:
+Then bind a key in `~/.config/herdr/config.toml`. **There are two bindings, and
+they do different things** — pick by whether you want the picker to float or to
+dock.
+
+### Floating (what the screenshots show)
+
+```toml
+[[keys.command]]
+key = "prefix+i"
+type = "popup"
+command = "/absolute/path/to/herdr-plugin-ssh/bin/herdr-ssh picker"
+width = 94
+height = 28
+description = "SSH picker"
+```
+
+`type = "popup"` is the only one that gives you a floating box over the layout.
+It is session-modal and restores the layout on exit.
+
+Two things it is easy to get wrong:
+
+- **`width` and `height` are bare integers here, not strings.** herdr accepts
+  either a cell count (`94`) or a percentage string (`"60%"`), and nothing
+  else — `width = "94"` is a TOML parse error that stops your whole config
+  loading, not a smaller window. Prefer cells: the picker fills whatever it is
+  handed, so a percentage of a large terminal gives you a wall rather than a
+  dialog.
+- **A popup runs a command, not a plugin action, so it needs a real path.** Find
+  yours with `herdr plugin list --json | jq -r '.result.plugins[] |
+select(.plugin_id=="purehate.herdr-ssh") | .plugin_root'`.
+
+herdr draws its own border round the popup, labelled `popup`, in your
+`[ui].accent` colour. That border is herdr's and is not configurable from the
+keybinding — the picker deliberately draws none of its own so you get one box
+rather than two.
+
+### Docked
 
 ```toml
 [[keys.command]]
@@ -26,7 +62,11 @@ type = "plugin_action"
 command = "purehate.herdr-ssh.open-picker"
 ```
 
-`prefix+i` is a suggestion. Avoid `prefix+r` — that is herdr's built-in resize mode.
+Shorter, and no path to keep in sync. This opens the manifest's `overlay`
+pane, which docks into the layout instead of floating.
+
+`prefix+i` is a suggestion in both cases. Avoid `prefix+r` — that is herdr's
+built-in resize mode.
 
 ## Keys
 
