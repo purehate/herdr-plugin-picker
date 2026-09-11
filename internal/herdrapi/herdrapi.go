@@ -54,13 +54,10 @@ func New() Client {
 	}}
 }
 
-// Pane is the subset of herdr's PaneInfo the picker needs. herdr returns about
-// fifteen fields per pane; the rest are ignored.
-//
-// Label is a pointer so that "no label" stays distinguishable from a label of
-// "". herdr omits the key entirely on an unlabeled pane rather than sending
-// null, and both decode to nil here. A plain string would collapse the two
-// cases and make FindLabeled("") match every unlabeled pane.
+// Pane is the subset of herdr's PaneInfo the picker needs; the other fields are
+// ignored. Label is a pointer so "no label" stays distinguishable from a label
+// of "": herdr omits the key on an unlabeled pane, and a plain string would
+// collapse the two cases and make FindLabeled("") match every unlabeled pane.
 type Pane struct {
 	PaneID      string  `json:"pane_id"`
 	TabID       string  `json:"tab_id"`
@@ -153,22 +150,14 @@ func (c Client) FocusPane(p Pane, currentWorkspace, currentTab string) error {
 
 // OpenOpts describes a pane to open from a declared plugin entrypoint.
 //
-// Sizing (--width/--height) is popup-only and has no field here on purpose:
-// this API opens no popups, so a guard for it would never be exercised.
+// Sizing (--width/--height) is popup-only and has no field here on purpose: this
+// API opens no popups, so a guard for it would never be exercised. The floating
+// box the picker draws in is a popup, but it comes from a `type = "popup"`
+// keybinding, not from this call.
 //
-// "This API", not "this plugin" — the distinction the original comment here got
-// wrong. The floating box the picker draws in *is* a popup; it just does not
-// come from `plugin pane open`. It is a keybinding: `type = "popup"` in the
-// operator's herdr config, with the width and height on the binding. Overlay is
-// not the floating version of this call — it is a full-pane placement like the
-// rest, which is why binding the picker to overlay produced a pane rather than
-// the box that was asked for.
-//
-// The single-popup limit (`ui_busy` / `a popup pane is already open`) is real
-// and is why routing the picker through this API as a popup was never the path,
-// but it is not a reason popup is absent from the vocabulary below. Both values
-// parse; `--help` under-reports the list and the bare `herdr plugin pane` usage
-// line is the accurate one. Do not prune this field's comment to match --help.
+// Both `popup` and `overlay` parse as Placement values; `herdr plugin pane
+// --help` under-reports the list and the bare usage line is accurate. Do not
+// prune the field to match --help.
 type OpenOpts struct {
 	Plugin     string
 	Entrypoint string
@@ -181,10 +170,8 @@ type OpenOpts struct {
 
 // PlacementTargetsPane reports whether placement accepts a --target-pane. Only
 // split and zoomed target an existing pane; overlay and popup target the active
-// one, and a tab takes a workspace id instead, so herdr rejects the flag on
-// those three. This is the one definition of that set: a caller that has to
-// spend work producing a pane id asks here first, rather than restating the
-// list and leaving two places to update when a placement is added.
+// one, and a tab takes a workspace id instead. This is the one definition of
+// that set — callers ask here rather than restating the list.
 func PlacementTargetsPane(placement string) bool {
 	return placement == "split" || placement == "zoomed"
 }
@@ -195,12 +182,10 @@ func (c Client) PluginPaneOpen(o OpenOpts) error {
 	if o.Placement != "" {
 		args = append(args, "--placement", o.Placement)
 	}
-	// Enforcing the rule belongs here, not in the callers: they pass the
-	// caller's pane id unconditionally and let placement decide whether it
-	// reaches the wire. A caller that consults PlacementTargetsPane itself is
-	// deciding whether the id is worth computing, which is a different question
-	// — this line is still the only thing keeping the flag off an open that
-	// would reject it.
+	// Enforcing the rule here, not in the callers: they pass the caller's pane
+	// id unconditionally and let placement decide whether it reaches the wire.
+	// A caller consulting PlacementTargetsPane is deciding whether the id is
+	// worth computing, which is a different question.
 	if o.TargetPane != "" && PlacementTargetsPane(o.Placement) {
 		args = append(args, "--target-pane", o.TargetPane)
 	}

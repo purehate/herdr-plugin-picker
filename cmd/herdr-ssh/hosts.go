@@ -12,24 +12,17 @@ import (
 	"github.com/purehate/herdr-plugin-ssh/internal/sshconfig"
 )
 
-// sshConfigPath returns the operator's ssh config path, or "" when there is
-// none to name: os.UserHomeDir fails on an unset or empty $HOME, which is how
-// the plugin runs under a stripped environment.
+// sshConfigPath returns the operator's ssh config path, or "" when there is none
+// to name: os.UserHomeDir fails on an unset or empty $HOME, which is how the
+// plugin runs under a stripped environment.
 //
-// Deliberately not a cwd-relative fallback. filepath.Join(".ssh", "config")
-// resolves against the process working directory, and ssh never reads
-// $CWD/.ssh/config, so the picker would enumerate hosts from a file
-// `ssh <alias>` provably ignores and describe every row with a HostName, Port,
-// User and proxy route the connection would not use — and in a directory the
-// operator did not author, a planted .ssh/config would become the host list.
-// That is the extra_config_paths defect (5a31f54) reached by another route; the
-// ruling there was that the rows the picker shows must be the set ssh can
-// reach.
+// Deliberately not a cwd-relative fallback: ssh never reads $CWD/.ssh/config, so
+// the picker would enumerate hosts from a file `ssh <alias>` ignores — and in a
+// directory the operator did not author, a planted .ssh/config would become the
+// host list. The rows the picker shows must be the set ssh can reach.
 //
-// "" rather than an error because both callers hand the result straight to
-// loadHosts, which already owns the operator-facing warning list — an error
-// return would only be translated into the same warning one frame earlier.
-// loadHosts' empty-path arm is the other half of this contract.
+// "" rather than an error because both callers hand the result to loadHosts,
+// which owns the operator-facing warning list.
 func sshConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -42,14 +35,11 @@ func sshConfigPath() string {
 // human-readable warnings for the picker footer.
 //
 // One file in, and its Include chain: sshconfig.Parse walks that itself. There
-// is deliberately no way to add a config from outside the chain, because the
-// picker's rows have to be the set ssh can reach. Selecting a host execs
-// `ssh <alias>` with no -F, so ssh resolves the alias against this file and its
-// Includes alone — a row sourced anywhere else would be described here with a
-// HostName, Port, User and proxy route that ssh never sees, and the connection
-// would go somewhere other than the preview said. On an engagement that is
-// traffic from an unauthorized source, straight past the pivot the operator
-// picked.
+// is no way to add a config from outside the chain, because the picker's rows
+// have to be the set ssh can reach — selecting a host execs `ssh <alias>` with
+// no -F, so ssh resolves against this file and its Includes alone. A row sourced
+// elsewhere would be described with a route ssh never sees, and the connection
+// would go somewhere other than the preview said.
 func loadHosts(primary string, cfg pluginconfig.Config) ([]sshconfig.Host, []string) {
 	var hosts []sshconfig.Host
 	var warnings []string
@@ -92,20 +82,17 @@ func loadHosts(primary string, cfg pluginconfig.Config) ([]sshconfig.Host, []str
 }
 
 // targetsFor builds probe targets. Two kinds of host are marked Skip, for the
-// same underlying reason: dialing them would produce a confident answer about an
-// address the connection is not going to use.
+// same reason: dialing them would produce a confident answer about an address
+// the connection is not going to use.
 //
-//   - Behind a ProxyJump or ProxyCommand. A direct dial tests the wrong network.
-//   - HostName still carrying a `%` token. ssh expands %h, %p, %r and the rest
-//     at connect time; this picker does not, so the literal token is what would
-//     be dialed. `%` cannot appear in a hostname (RFC 1123), and ssh's own
-//     escape for a literal one is `%%`, so a `%` here is always either an
-//     unexpanded token or an escape — never something resolvable.
+//   - Behind a ProxyJump or ProxyCommand: a direct dial tests the wrong network.
+//   - HostName still carrying a `%` token: ssh expands it at connect time, this
+//     picker does not, and `%` cannot appear in a real hostname (RFC 1123), so
+//     the literal token is never dialable.
 //
-// Both would otherwise render a false "down" on a host ssh reaches perfectly
-// well, which is the worst direction for this marker to fail in: the operator
-// skips a live host. Skipped targets emit no probe.Result, so they render as
-// unprobed instead — the honest state, since we did not look.
+// Both would otherwise render a false "down" on a host ssh reaches, which is the
+// worst direction for this marker to fail in. Skipped targets emit no Result, so
+// they render as unprobed — the honest state, since we did not look.
 func targetsFor(hosts []sshconfig.Host) []probe.Target {
 	out := make([]probe.Target, 0, len(hosts))
 	for _, h := range hosts {

@@ -7,21 +7,17 @@ import (
 
 // The picker has two launch modes, and herdr hands them different environments.
 //
-// A plugin pane — `herdr plugin pane open --entrypoint picker`, which is what
-// the `plugin open-picker` action triggers — gets HERDR_PLUGIN_CONFIG_DIR,
+// A plugin pane — `herdr plugin pane open --entrypoint picker`, which the
+// `plugin open-picker` action triggers — gets HERDR_PLUGIN_CONFIG_DIR,
 // HERDR_PLUGIN_STATE_DIR and HERDR_PANE_ID. A popup keybinding
-// (`type = "popup"`) gets none of them: a popup runs a shell command, so herdr
-// exports only the session context — HERDR_ACTIVE_PANE_ID, HERDR_ACTIVE_TAB_ID,
-// HERDR_ACTIVE_WORKSPACE_ID, HERDR_BIN_PATH, HERDR_SOCKET_PATH, HERDR_ENV.
-// Measured on herdr 0.9.0 rather than assumed.
+// (`type = "popup"`) gets none of them: it runs a shell command, so herdr
+// exports only the session context (HERDR_ACTIVE_*, HERDR_BIN_PATH,
+// HERDR_SOCKET_PATH, HERDR_ENV). Measured on herdr 0.9.0 rather than assumed.
 //
-// That matters because the popup is the mode that renders a floating box; the
-// overlay placement calls layout.set_split_ratio and docks. Reading the
-// plugin-pane variables alone meant the floating mode silently ran on built-in
-// defaults: no operator accent, and no plugin config at all. Silently, because
-// both loaders treat an empty path as "no location was supplied" and return
-// defaults without an error — the honest answer when nothing is set, and the
-// wrong one when something is set somewhere else.
+// That matters because the popup is the mode that renders a floating box.
+// Reading the plugin-pane variables alone meant it silently ran on built-in
+// defaults — no operator accent, no plugin config — because both loaders treat
+// an empty path as "no location supplied" and return defaults without an error.
 //
 // So each resolver prefers the variable and falls back to the location herdr
 // itself documents. Nothing here invents a path.
@@ -60,15 +56,12 @@ func resolvePluginConfigDir() string {
 
 // resolveCaller fills in context that openPicker did not forward. In direct
 // popup mode openPicker does not run — the popup execs the picker verb itself —
-// so pickerCaller returns the zero value. HERDR_ACTIVE_PANE_ID names the pane
-// the operator triggered that popup from and is the right substitute.
+// so pickerCaller returns the zero value, and HERDR_ACTIVE_PANE_ID names the
+// pane the operator triggered the popup from.
 //
 // Field by field, not all-or-nothing: a forwarded caller always wins, because
-// inside a plugin popup pane the HERDR_ACTIVE_* variables may name the popup
-// itself. Filling only the empty fields also keeps a partial
-// invocation-scoped context useful — FocusPane compares the target's workspace
-// and tab against these, and an absent value costs a redundant focus while a
-// wrong one costs a jump to the wrong place.
+// inside a plugin popup pane HERDR_ACTIVE_* may name the popup itself. An
+// absent value costs a redundant focus; a wrong one jumps to the wrong place.
 func resolveCaller(c caller) caller {
 	if c.PaneID == "" {
 		c.PaneID = os.Getenv("HERDR_ACTIVE_PANE_ID")
@@ -83,14 +76,11 @@ func resolveCaller(c caller) caller {
 }
 
 // pickerSelfPane returns the pane the picker is drawing into, which it closes on
-// the way out — and it deliberately has no HERDR_ACTIVE_PANE_ID fallback.
-//
-// That variable names the operator's pane, never the picker's. Falling back to
-// it here would hand closeOverlay the pane the operator was working in and
-// close that instead. In popup mode the correct answer is the empty string:
-// closeOverlay no-ops on it, and a popup closes itself when its command exits.
-// Kept as a named function rather than an inline Getenv so the absence is
-// something a reader can see, and so a test can hold it.
+// the way out. It deliberately has no HERDR_ACTIVE_PANE_ID fallback: that
+// variable names the operator's pane, never the picker's, and falling back would
+// close the pane the operator was working in. In popup mode the answer is "",
+// on which closeOverlay no-ops — a popup closes itself when its command exits.
+// A named function rather than an inline Getenv, so the absence is visible.
 func pickerSelfPane() string {
 	return os.Getenv("HERDR_PANE_ID")
 }

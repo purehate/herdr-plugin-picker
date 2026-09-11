@@ -48,9 +48,9 @@ type block struct {
 
 	// guard is non-nil when this stanza was declared inside an Include whose
 	// enclosing stanza was a real restriction, not the implicit root `Host *`.
-	// ssh parses such an include under SSHCONF_NEVERMATCH when the enclosing
-	// Host didn't match, so the nested stanza must not activate for an alias
-	// the guard itself rejects — otherwise it lists a phantom host.
+	// ssh parses such an include under SSHCONF_NEVERMATCH, so the nested stanza
+	// must not activate for an alias the guard rejects — otherwise it lists a
+	// phantom host.
 	guard *block
 }
 
@@ -73,12 +73,11 @@ func stripComment(line string) string {
 	return line
 }
 
-// splitLine parses one config line into its key/value pair. ok reports
-// whether a usable key/value was found. badQuotes reports an odd number of
-// `"` characters in the value: ssh treats that as a fatal "invalid quotes"
-// error and refuses the whole file, but we stay non-fatal here and let the
-// caller turn it into a Warning instead of silently rendering a
-// healthy-looking picker for a config ssh itself would reject.
+// splitLine parses one config line into its key/value pair. badQuotes reports an
+// odd number of `"` characters: ssh treats that as a fatal "invalid quotes"
+// error and refuses the whole file, but we stay non-fatal and let the caller
+// turn it into a Warning rather than render a healthy-looking picker for a
+// config ssh would reject.
 func splitLine(raw string) (key, value string, ok, badQuotes bool) {
 	line := strings.TrimSpace(raw)
 	if line == "" || strings.HasPrefix(line, "#") {
@@ -110,16 +109,13 @@ func splitLine(raw string) (key, value string, ok, badQuotes bool) {
 
 // expandTilde resolves a leading `~` — bare, or `~/...` — against the home
 // directory. Any other input, `~user` included, comes back unchanged with a nil
-// error: ssh expands `~user` from the passwd file and this package deliberately
-// does not.
+// error: ssh expands `~user` from the passwd file and this package does not.
 //
-// It reports an error, and an empty path, when the home directory cannot be
-// resolved (os.UserHomeDir fails on an unset or empty $HOME). Returning p
-// unchanged there — the previous behavior — handed the caller a *relative* path
-// with a directory literally named `~` in it, which cannot match anything an
-// operator intended and fails silently: an Include glob simply found nothing.
-// The empty return is deliberate too, so a caller that ignores the error cannot
-// go on to open a tilde path by accident.
+// It reports an error and an empty path when the home directory cannot be
+// resolved (os.UserHomeDir fails on an unset or empty $HOME). Returning the
+// input there would hand the caller a relative path with a literal `~` directory
+// that silently matches nothing; the empty return means a caller ignoring the
+// error cannot open a tilde path by accident.
 func expandTilde(p string) (string, error) {
 	if p != "~" && !strings.HasPrefix(p, "~/") {
 		return p, nil
@@ -155,12 +151,10 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// matchPattern reports whether alias matches an ssh_config(5) PATTERNS
-// pattern. ssh recognizes only two wildcards — '*' (zero or more of any
-// character) and '?' (exactly one character); every other byte, including
-// '[', ']', and '\', is literal. This deliberately differs from
-// filepath.Match, whose "[...]" character classes would otherwise treat a
-// literal host alias like "web[12]" as glob syntax.
+// matchPattern reports whether alias matches an ssh_config(5) PATTERNS pattern.
+// ssh recognizes only two wildcards — '*' and '?' — and every other byte,
+// including '[', ']', and '\', is literal. This differs from filepath.Match,
+// whose "[...]" classes would treat an alias like "web[12]" as glob syntax.
 func matchPattern(pattern, alias string) bool {
 	// Greedy backtracking match, byte-wise: track the most recent '*' so a
 	// failed literal/'?' match can retry by consuming one more alias byte
@@ -231,20 +225,16 @@ func (b block) declares(alias string) bool {
 // Parse reads root and returns its connectable hosts in declaration order.
 // Non-fatal problems come back as warnings; only an unreadable root is an error.
 func Parse(root string) ([]Host, []Warning, error) {
-	// ssh_config(5) fixes the include base at ~/.ssh for a user config. When
-	// the home directory cannot be resolved there is no base, and "" says so:
-	// parseIncludes warns and skips a relative Include rather than joining it
-	// onto nothing and globbing the process working directory. Not an error
-	// return, because root itself may still be perfectly readable and its own
-	// hosts are still worth having — the same reason one bad Include does not
-	// cost the operator the rest of their config. An error here would also
-	// break Parse's contract that an error and warnings are mutually
-	// exclusive, since root can produce warnings of its own.
+	// ssh_config(5) fixes the include base at ~/.ssh for a user config. When the
+	// home directory cannot be resolved there is no base, and "" says so:
+	// parseIncludes warns and skips a relative Include rather than globbing the
+	// process working directory. Not an error return, because root may still be
+	// readable and its own hosts worth having — and root can produce warnings of
+	// its own, which an error would be mutually exclusive with.
 	//
-	// Assigned explicitly rather than leaning on expandTilde's empty return for
-	// the same value: this way the "no base" signal does not depend on what the
-	// error path happens to return, and an expandTilde that started handing back
-	// its input again could not quietly reintroduce a cwd-relative base here.
+	// Assigned explicitly rather than leaning on expandTilde's empty return, so
+	// the "no base" signal does not depend on what the error path happens to
+	// return.
 	base, err := expandTilde("~/.ssh")
 	if err != nil {
 		base = ""
@@ -273,18 +263,15 @@ func parse(root, includeBase string) ([]Host, []Warning, error) {
 	return resolve(blocks), warns, nil
 }
 
-// parseFile parses one config file. enclosing supplies the patterns that govern
-// keywords appearing before this file's first Host stanza: for the root config
-// that is an implicit `Host *`, but for an included file it is the stanza the
-// Include sat inside, because ssh processes an Include with the caller's active
-// block still in effect.
+// parseFile parses one config file. enclosing supplies the patterns governing
+// keywords before this file's first Host stanza: an implicit `Host *` for the
+// root config, but for an included file the stanza the Include sat inside, since
+// ssh processes an Include with the caller's active block still in effect.
 //
-// ancestors tracks files currently open on this descent path, not every file
-// ever parsed: it is marked here and unmarked via defer on return, so a
-// fragment shared by two sibling Include directives resolves for both
-// instead of being dropped the second time. depth is the number of Include
-// hops taken to reach this file; parseIncludes uses it, together with
-// ancestors, to cap recursion instead of deduplicating by path.
+// ancestors tracks files open on this descent path, not every file ever parsed —
+// marked here and unmarked via defer, so a fragment shared by two sibling
+// Includes resolves for both. depth is the Include hop count, used with
+// ancestors to cap recursion rather than deduplicate by path.
 func parseFile(path, includeBase string, enclosing block, ancestors map[string]bool, depth int, warns []Warning) ([]block, []Warning, error) {
 	expanded, err := expandTilde(path)
 	if err != nil {
@@ -473,28 +460,20 @@ func resolveHost(alias string, blocks []block) Host {
 }
 
 // parseIncludes expands one Include directive. Relative patterns resolve
-// against includeBase, which is fixed at ~/.ssh for the primary config at
-// every nesting depth per ssh_config(5) — never the including file's own
-// directory, and never the process working directory: a pattern that cannot be
-// resolved is a warning, not a glob against wherever the plugin happens to have
-// been started. enclosing carries the caller's active stanza into the included
-// file, since ssh processes an Include with that stanza still in effect.
+// against includeBase, fixed at ~/.ssh for the primary config at every depth per
+// ssh_config(5) — never the including file's directory, never the process cwd.
+// enclosing carries the caller's active stanza into the included file, since ssh
+// processes an Include with that stanza still in effect.
 //
-// An absent target — a zero-match glob or a missing literal path — is
-// silent. Verified against OpenSSH_10.3p1: ssh does not treat a missing
-// Include as a misconfiguration, and warning here would false-positive on an
-// optional, tool-managed include (e.g. a package that appends its own
-// Include line and may not be installed, or may since have been removed). A
-// malformed pattern (filepath.ErrBadPattern) or a present-but-unreadable
-// target (permission denied, etc.) is a real misconfiguration and is a
-// warning: one bad include must not cost the operator the rest of their
-// hosts.
+// An absent target (zero-match glob or missing literal path) is silent, verified
+// against OpenSSH_10.3p1; warning would false-positive on an optional,
+// tool-managed include. A malformed pattern or a present-but-unreadable target
+// is a warning, so one bad include does not cost the operator the rest.
 //
-// A match that is already an open ancestor on this descent path (a true
-// cycle, including a file that includes itself) or that would push past
-// maxIncludeDepth is also a warning, and parsing does not descend into it —
-// ssh_config(5) has no visited set, so re-including a live ancestor is only
-// ever bounded by the same recursion cap, never silently deduplicated.
+// A match already open on this descent path (a true cycle) or past
+// maxIncludeDepth is also a warning, and parsing does not descend: ssh_config(5)
+// has no visited set, so re-including a live ancestor is bounded by the same cap
+// rather than silently deduplicated.
 func parseIncludes(value, parent, includeBase string, enclosing block, line int, ancestors map[string]bool, depth int, warns []Warning) ([]block, []Warning) {
 	var out []block
 	for _, rawPattern := range strings.Fields(value) {

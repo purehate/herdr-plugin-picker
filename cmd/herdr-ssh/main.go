@@ -25,15 +25,11 @@ func main() {
 	}
 }
 
-// reportFatal prints err on the way out — unless fatalInPane already put it on
-// the operator's screen and held the pane until they read it. Printing it again
-// would show the same line twice: once above the "press enter to close" prompt,
-// and once more after the keypress, when the pane is already going away.
-//
-// Only errors carrying errReported are suppressed. Everything else has been
-// reported nowhere yet — the usage errors, runConnect's flag errors, and a
-// failed pane open — and this is the only place they would ever be printed, so
-// they must still come out here.
+// reportFatal prints err on the way out, unless fatalInPane already put it on
+// the operator's screen and held the pane until they read it — printing again
+// would show the same line twice. Only errors carrying errReported are
+// suppressed; usage errors, runConnect's flag errors, and a failed pane open are
+// reported nowhere else and must still come out here.
 func reportFatal(out io.Writer, err error) {
 	if errors.Is(err, errReported) {
 		return
@@ -68,19 +64,15 @@ func run(args []string) error {
 // openPicker runs in the caller's pane: it forwards where the operator was to
 // the new picker process, then opens it as a floating popup.
 //
-// Forwarding the caller is the whole reason this verb exists rather than
-// the action shelling straight out to `herdr plugin pane open`. The picker
-// needs to know which pane the operator triggered it from so `enter` splits
-// that pane rather than whichever one herdr happens to consider active by the
-// time a selection is made — and this process, unlike the picker's, is running
-// in that pane's context.
+// Forwarding the caller is why this verb exists rather than the action shelling
+// straight out to `herdr plugin pane open`: the picker needs to know which pane
+// triggered it so `enter` splits that pane, and this process — unlike the
+// picker's — is running in that pane's context.
 //
-// Placement matches the manifest's pane declaration. Both carry it because
-// they are read on different paths: the manifest's is what a `plugin_action`
-// keybinding gets, and this one is what an explicit `plugin pane open` call
-// gets. Letting them drift would mean the picker floats or docks depending on
-// how it was invoked, which is the kind of difference nobody notices until it
-// is a bug report.
+// Placement matches the manifest's pane declaration because the two are read on
+// different paths (a `plugin_action` keybinding versus an explicit `plugin pane
+// open`); letting them drift would make the picker float or dock depending on
+// how it was invoked.
 func openPicker(api herdrapi.Client) error {
 	return api.PluginPaneOpen(herdrapi.OpenOpts{
 		Plugin:     pluginID,
@@ -92,13 +84,10 @@ func openPicker(api herdrapi.Client) error {
 }
 
 // pickerFn is picker.Run's signature, injected so everything around the picker
-// can be tested without a terminal to draw into.
-//
-// A parameter rather than a package-level variable, following internal/probe's
-// dialFn for the same reason argued there: as a variable, every test wanting a
-// fake would assign it and restore it with a defer, making it shared mutable
-// state that races both the other tests and runPicker's own read of it. Passing
-// it in makes that race unrepresentable rather than merely discouraged.
+// can be tested without a terminal to draw into. A parameter rather than a
+// package-level variable, following internal/probe's dialFn: as a variable it
+// would be shared mutable state that races both the other tests and runPicker's
+// own read of it.
 type pickerFn func(picker.Options) (picker.Selection, bool, error)
 
 // runPicker draws the popup and acts on the operator's choice.
@@ -129,42 +118,29 @@ func runPickerWith(out io.Writer, in io.Reader, pick pickerFn, api herdrapi.Clie
 	// fixed order rather than prepended twice, which would silently reverse them.
 	var loadWarnings []string
 	if cfgErr != nil {
-		// One sentence for one failure, whichever verb produced it: this is the
-		// body runConnectWith prints too, and the "herdr-ssh: " it prefixes there
-		// is the stream's, not the message's. That prefix says who is speaking on
-		// a stderr shared with ssh and the operator's own shell; inside the
-		// picker's footer there is nobody else to confuse it with, so repeating it
-		// here would be noise in the line the operator has to read. Adding a
-		// "plugin config: " label of its own was the same mistake twice over —
-		// pluginconfig's error already opens with "invalid plugin config".
+		// No "herdr-ssh: " prefix and no label of its own: pluginconfig's error
+		// already opens with "invalid plugin config", and inside the picker's
+		// footer there is nobody else to confuse the speaker with.
 		loadWarnings = append(loadWarnings, fmt.Sprintf("%v — ignoring the rejected keys", cfgErr))
 	}
 	if themeErr != nil {
-		// The same reasoning as above, applied to the other loader: theme.LoadFile
-		// already opens with "theme config", so a "theme: " of its own said the
-		// word the operator had just read. Only the remedy clause is ours.
+		// Same reasoning: theme.LoadFile already opens with "theme config", so
+		// only the remedy clause is ours.
 		loadWarnings = append(loadWarnings, fmt.Sprintf("%v — using the default palette", themeErr))
 	}
 	warnings = append(loadWarnings, warnings...)
 
 	// Only ask herdr for the session panes when reuse is on. OpenPanes exists to
-	// paint the ▪ marker, and the marker's whole claim is that enter focuses the
-	// session that is already there instead of opening a second one — a promise
-	// only performSelection's `cfg.ReusePanes && !sel.ForceNew` branch can keep.
-	// With reuse off that branch never runs, so the marker would sit on hosts
-	// where enter opens another pane, and it would do so while suppressing the
-	// reachability glyph it deliberately outranks. The tiebreak is justified by
-	// ▪ being the marker that changes what enter does; where it no longer
-	// changes that, it is a confident claim hiding an accurate one.
-	//
-	// Gated at the population rather than after it, because the call is the
-	// cost: openSessions spawns `herdr pane list` and decodes its reply on the
-	// picker's startup path, ahead of the first frame, and with reuse off
-	// nothing downstream can read the result. Left nil, which is already the
-	// no-sessions case every reader handles.
+	// paint the ▪ marker, whose claim is that enter focuses the existing session
+	// — a promise only performSelection's `cfg.ReusePanes && !sel.ForceNew`
+	// branch can keep. With reuse off that branch never runs, so the marker would
+	// sit on hosts where enter opens another pane while suppressing the
+	// reachability glyph it deliberately outranks. Gated at the population
+	// because openSessions spawns `herdr pane list` on the startup path; with
+	// reuse off nothing downstream reads the result.
 	//
 	// ReusePanes alone, without ForceNew: that key is pressed inside the picker,
-	// so there is no selection to consult yet at this point.
+	// so there is no selection to consult yet.
 	var openPanes map[string]string
 	if cfg.ReusePanes {
 		openPanes = openSessions(out, api)

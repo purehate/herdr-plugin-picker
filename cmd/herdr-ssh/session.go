@@ -61,16 +61,11 @@ func (r reported) Unwrap() []error { return []error{r.err, errReported} }
 
 // fatalInPane reports why the pane is about to close, then holds it open until
 // the operator acknowledges. Every fatal exit from a pane verb goes through
-// here; returning bare from one loses the diagnostic outright. The returned
-// error carries errReported so that main does not print it again.
-//
-// It is lost because a pane process owns a pty, so its output goes to the
-// terminal rather than to a pipe Herdr can read: `herdr plugin log` captures
-// action and event-hook invocations only, never pane entrypoints. See "Logging
-// Reach" in docs/specs/2026-09-09-ssh-picker-design.md. `session` is a pane
-// entrypoint, so there is no log to fall back to and no second chance — the
-// screen is the only channel, and this hold is the only thing keeping the
-// message on it.
+// here; returning bare from one loses the diagnostic outright, because a pane
+// process owns a pty and its output reaches the terminal rather than a pipe
+// herdr can read — `herdr plugin log` captures actions and event hooks, never
+// pane entrypoints. The screen is the only channel. The returned error carries
+// errReported so main does not print it again.
 func fatalInPane(out io.Writer, in io.Reader, err error) error {
 	_, _ = fmt.Fprintf(out, "herdr-ssh: %v\n\npress enter to close\n", err)
 	_, _ = fmt.Fscanln(in)
@@ -89,14 +84,10 @@ func runSessionWith(out io.Writer, in io.Reader) error {
 	cfg, err := pluginconfig.LoadDir(os.Getenv("HERDR_PLUGIN_CONFIG_DIR"))
 	if err != nil {
 		// Deliberately not a fatalInPane: this one is survivable, and the exec
-		// below leaves the operator a live pane to read it in.
-		//
-		// Onto out, not os.Stderr. A pane process owns a pty, so both streams
-		// land on the same screen and the operator cannot tell them apart — but
-		// a test can, and the os.Stderr version was unobservable from here while
-		// fatalInPane two lines down wrote to out. That split was an accident of
-		// how each line was written, not a decision: this pane has exactly one
-		// output channel, so the code should have exactly one too.
+		// below leaves the operator a live pane to read it in. Onto out, not
+		// os.Stderr: a pane has exactly one output channel, and both land on the
+		// same screen anyway — but a test can tell them apart, and the split was
+		// an accident rather than a decision.
 		_, _ = fmt.Fprintf(out, "herdr-ssh: %v — ignoring the rejected keys\n", err)
 	}
 

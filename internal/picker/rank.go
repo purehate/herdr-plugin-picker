@@ -30,14 +30,11 @@ const (
 )
 
 // Match is one ranked host plus the rune positions the query matched, so the
-// picker can highlight exactly the characters that earned the row its place.
-//
-// For a non-empty query exactly one of AliasPos / HostNamePos is non-nil:
-// scoreHost stops at the first tier that matches, and every alias tier is
-// checked before every hostname tier. Both are nil for an empty query, where
-// nothing matched and there is nothing to highlight.
-//
-// The indices are rune offsets, not byte offsets. The renderer walks runes.
+// picker can highlight the characters that earned the row its place. For a
+// non-empty query exactly one of AliasPos / HostNamePos is non-nil — scoreHost
+// stops at the first matching tier, and every alias tier precedes every hostname
+// tier. Both are nil for an empty query. The indices are rune offsets, not byte
+// offsets.
 type Match struct {
 	Host        sshconfig.Host
 	AliasPos    []int
@@ -122,21 +119,16 @@ func positionScore(s string, pos []int) int {
 // describe the reading that earned the tier — a contiguous run for the
 // substring tiers, the greedy walk for the scattered ones.
 func scoreHost(h sshconfig.Host, q string) (tier int, aliasPos, hostPos []int) {
-	// These positions are computed against the lowercased copy and then used to
-	// index the ORIGINAL — Match promises rune offsets, and the renderer walks
-	// the original's runes. That only holds because strings.ToLower is simple
-	// case mapping: it is Map(unicode.ToLower, ...), and unicode.ToLower is
-	// rune->rune, so the copy has exactly as many runes as the original and
-	// index i means the same rune in both. Bytes are not preserved (İ is two
-	// bytes and lowercases to one-byte "i") — only runes are, which is why the
-	// re-count in substringPos is a rune count and has to stay one.
+	// The positions are computed against the lowercased copy and used to index
+	// the ORIGINAL. That holds only because strings.ToLower is simple case
+	// mapping (rune->rune): the copy has the same number of runes as the
+	// original, so index i means the same rune in both. Bytes are not preserved
+	// (İ is two bytes and lowercases to one-byte "i"), which is why substringPos
+	// re-counts in runes.
 	//
-	// Full case folding would end that. Fold ß to "ss" and the copy grows a
-	// rune, so every index past it addresses the wrong rune of the original —
-	// and the ones past the end simply stop highlighting, because highlight
-	// membership-tests indices rather than bounds-checking them. So do not swap
-	// these for cases.Fold or ToLowerSpecial to make "strasse" match "straße"
-	// without also re-deriving the positions against the original. See
+	// Full case folding would end that: fold ß to "ss" and every index past it
+	// addresses the wrong rune. Do not swap these for cases.Fold or
+	// ToLowerSpecial without re-deriving the positions against the original. See
 	// TestRankPositionsSurviveLengthChangingCaseRunes.
 	alias := strings.ToLower(h.Alias)
 	host := strings.ToLower(h.HostName)

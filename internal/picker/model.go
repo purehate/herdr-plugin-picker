@@ -82,20 +82,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case probeMsg:
 		// probed and up are maps, so these writes are visible through every
-		// copy of the model that shares them. Deliberate: bubbletea holds
-		// exactly one model and discards the predecessor on each Update, so
-		// there is no observer of the older copies. Do not snapshot a model
-		// and expect its probe state to stay frozen.
+		// copy of the model that shares them. Safe because bubbletea holds one
+		// model and discards the predecessor on each Update; do not snapshot a
+		// model and expect its probe state to stay frozen.
 		m.probed[msg.Alias] = true
 		m.up[msg.Alias] = msg.Up
 		return m, waitProbe(m.opts.Probes)
 	case probeClosedMsg:
-		// Explicitly a no-op: the trailing return below would handle this
-		// identically. The arm exists so that "probes finished" reads as a
-		// message the model expects rather than one it silently ignores, and
-		// so there is somewhere obvious to hang behavior if it ever needs
-		// any. Deleting it changes nothing today — no test can catch that,
-		// which is why this comment is here instead of a test.
+		// A no-op, identical to the trailing return: the arm exists so
+		// "probes finished" reads as an expected message rather than one the
+		// model silently ignores.
 		return m, nil
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
@@ -104,15 +100,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	// Ctrl chords are dispatched before printable text. On this stack the two
-	// orderings are in fact equivalent: ultraviolet clears Key.Text whenever
-	// Mod is stronger than ModShift, and the special codes in the second
-	// switch below (esc, enter, up, down, backspace) are non-printable and
-	// never carry Text either. So this order is not currently load-bearing —
-	// but keep it. It costs nothing, and the alternative relies on a library
-	// invariant we do not control. What it is not is evidence that ctrl+t can
-	// arrive as Text "t": it cannot, and a guard written on that assumption
-	// would be guarding nothing.
+	// Ctrl chords are dispatched before printable text. The two orderings are
+	// equivalent on this stack — ultraviolet clears Key.Text for a stronger
+	// Mod, and the special codes below never carry Text — so this is not
+	// load-bearing today. Keep it anyway: the alternative relies on a library
+	// invariant we do not control. It is not evidence that ctrl+t can arrive as
+	// Text "t"; it cannot.
 	if k.Mod&tea.ModCtrl != 0 {
 		return m.handleCtrl(k)
 	}
@@ -179,19 +172,15 @@ func (m model) refilter() model {
 	return m
 }
 
-// deleteWord trims the last word off the query: first any trailing separators,
-// then the run of non-separators before them. It reuses the scorer's separator
-// set so "word" means the same thing while typing as it does while matching —
-// ctrl+w on "nixos-dev" leaves "nixos-", which is still a useful query.
+// deleteWord trims the last word off the query: any trailing separators, then
+// the run of non-separators before them. It reuses the scorer's separator set,
+// so "word" means the same thing while typing as while matching — ctrl+w on
+// "nixos-dev" leaves "nixos-".
 //
-// Scan runes, not bytes. A byte scan would work today, but only because every
-// separator in isSeparator is ASCII and no byte of a multi-byte UTF-8 rune can
-// equal an ASCII byte — so it happens to stop exactly where a rune scan does.
-// That equivalence is a property of the separator set, not of this function,
-// and it ends the moment isSeparator gains a non-ASCII member, at which point
-// a byte scan starts cutting runes in half. The conversion is what makes this
-// correct independently of that set; do not remove it as a redundant
-// allocation.
+// Scan runes, not bytes. A byte scan happens to stop in the same place only
+// while every separator in isSeparator is ASCII; that equivalence is a property
+// of the set, not of this function, and it ends the moment a non-ASCII member
+// is added. Do not remove the conversion as a redundant allocation.
 func deleteWord(q string) string {
 	r := []rune(q)
 	i := len(r)

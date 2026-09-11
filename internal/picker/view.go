@@ -18,18 +18,10 @@ const (
 	downMarker  = "○" // no answer
 	skipMarker  = "~" // proxied, deliberately not probed
 	blankMarker = " " // not probed yet
-	// fallbackRows is how many host rows to draw before a WindowSizeMsg has
-	// reported a height. Only then — see visibleRows, which otherwise fills
-	// whatever the pane gives it.
-	//
-	// This was a ceiling, applied at every height, on the reasoning that the
-	// picker should stay a floating box rather than grow into a full-screen
-	// list. The reasoning assumed the picker chooses its own size. It does
-	// not: herdr sizes the popup from width/height on the keybinding, and the
-	// plugin is handed the pane that results. A ceiling under that pane does
-	// not make the box smaller, it makes the box emptier — at the operator's
-	// 60% binding it left two thirds of the popup void. The size is the
-	// operator's to set in their config; filling it is this package's job.
+	// fallbackRows is how many host rows to draw before a WindowSizeMsg reports
+	// a height. Only then — visibleRows otherwise fills whatever the pane gives
+	// it. There is no ceiling: herdr sizes the popup, and a ceiling under it only
+	// leaves the box emptier, not smaller.
 	fallbackRows = 12
 	// maxWarnings is the ceiling on warning lines in the footer. The count is
 	// unbounded — loadHosts emits one per unreadable include — and unlike the
@@ -59,21 +51,17 @@ func (m model) showPreview() bool { return m.preview && m.cursor < len(m.view) }
 const previewLabelWidth = 14
 
 // previewFields is the preview's content, one "Label value" line per populated
-// field, with the labels padded so the values form a single edge. The
-// alignment is a requirement, not presentation: the spec calls it "the whole
-// reason the panel exists". It shipped ragged and no test looked at the column,
-// which is why TestPreviewLabelsPadToACommonWidth now asserts the edge itself
-// rather than any one line's text.
+// field, with the labels padded so the values form a single edge. The alignment
+// is a requirement, not presentation: scanning down the list is why the panel
+// exists, and an edge that moves is worse than one further right.
 //
 // previewLines budgets these and renderPreview draws them, so the row budget
-// cannot disagree with what actually reaches the screen — the preview's height
-// varies with how many fields the cursor host happens to set, which is why the
-// chrome is computed here instead of written down as a constant.
+// cannot disagree with what reaches the screen — the preview's height varies
+// with how many fields the cursor host sets.
 //
-// Note that sshconfig.Parse always resolves Port and sets SourceFile, so a
-// parsed host has at least three fields here, never two. A hand-built Host in
-// a test can have two, which understates the chrome — that discrepancy hid a
-// real overflow at height 9 from two review passes.
+// sshconfig.Parse always resolves Port and sets SourceFile, so a parsed host
+// has at least three fields here, never two; a hand-built test Host can have
+// two and understate the chrome.
 func previewFields(h sshconfig.Host) []string {
 	type field struct{ label, value string }
 	fields := []field{{"HostName", h.HostName}, {"Port", h.Port}}
@@ -101,20 +89,11 @@ func previewFields(h sshconfig.Host) []string {
 	return lines
 }
 
-// fixedChrome counts the lines View draws whatever the height is: the title
-// block, the footer, and the warning block when there is one. These do not
-// yield. The title is the operator's own typing echoed back, the hints are the
-// only discoverability the picker has, and a warning is the only account of a
-// host the operator can see in their own config and cannot see here.
-//
-// This is the one lever the whole height budget hangs off — visibleRows and
-// previewLines both subtract it — so the frame's cost is spelled out as named
-// constants rather than folded into a number.
+// fixedChrome counts the lines View draws at any height: the title block, the
+// footer, and the warning block when there is one. These do not yield, so
+// visibleRows and previewLines both subtract them.
 // TestFixedChromeCountsWhatTheFrameDraws asserts the total against what the
-// frame actually emits, which is the check that caught the frame outrunning
-// this by one when the border came off: box() had been trimming View's
-// trailing newline, and without it the empty line after it was a real screen
-// row that nothing here budgeted for.
+// frame actually emits.
 func (m model) fixedChrome() int {
 	return headerRows + footerRows + m.warningLines()
 }
@@ -136,14 +115,10 @@ func (m model) warningLines() int {
 }
 
 // noticeReserve is the line the "… N off screen" notice needs once the list is
+// truncated. It reserves on len(m.view) > 1 rather than the exact truncation
+// condition, because rows is what that condition needs and the two would be
+// mutually recursive. It never under-reserves: a single-host list cannot be
 // truncated.
-//
-// It reserves on len(m.view) > 1 rather than on the exact truncation condition
-// (len(m.view) > rows), because rows is what this feeds into and the two would
-// be mutually recursive. The cost is at most one over-reserved line, and only
-// for a list short enough to fit entirely in a pane tight enough for the
-// preview to be shedding fields. Never under-reserves: a single-host list
-// cannot be truncated at all.
 func (m model) noticeReserve() int {
 	if len(m.view) > 1 {
 		return 1
@@ -152,16 +127,10 @@ func (m model) noticeReserve() int {
 }
 
 // previewLines is how many lines the preview gets: a separator plus as many
-// fields as fit, or none.
-//
-// The preview is what yields when the pane is too short, for two reasons: it is
-// the only chrome whose height varies — it grows with the cursor host's field
-// count, which is what made the old overflow depend on which row the cursor was
-// on — and it is the only one the operator can already dismiss with ^o.
-//
-// Below the threshold ^o becomes a no-op. That is a deliberate trade rather
-// than a bug: in a pane this short the preview cannot fit whatever the toggle
-// says, and the host list is the part worth keeping.
+// fields as fit, or none. The preview is what yields when the pane is too
+// short — it is the only chrome whose height varies, and the only one the
+// operator can dismiss with ^o. Below the threshold ^o is a no-op: in a pane
+// this short the host list is the part worth keeping.
 func (m model) previewLines() int {
 	if !m.showPreview() {
 		return 0
@@ -280,52 +249,21 @@ func (m model) View() tea.View {
 	return tea.NewView(m.clampToWidth(strings.TrimRight(frame.String(), "\n") + "\n"))
 }
 
-// clampToWidth truncates every line of the assembled frame to the pane width.
-// It is the only place a width is read on the way to the screen.
+// clampToWidth truncates every line of the assembled frame to the pane width,
+// and is the only place a width is read on the way to the screen.
 //
-// Width is a height problem. The picker renders inline rather than in an
-// alternate screen, so the renderer sizes the frame to its content instead of
-// clipping it to the terminal: a line wider than the pane soft-wraps into an
-// extra screen row, and the frame occupies more rows than fixedChrome,
-// noticeReserve and previewLines budgeted. All of that arithmetic counts logical
-// lines, so none of it can see the overflow. The key hints alone are 77 columns,
-// which is an ordinary split. Truncation is what makes the height invariant a
-// fact rather than an aspiration.
+// Width is a height problem: the picker renders inline, so a line wider than
+// the pane soft-wraps into an extra screen row the height budget counted as
+// one. The key hints alone are 77 columns. One clamp on the assembled frame
+// rather than a width threaded into each renderer, so a line added to View
+// cannot be silently exempt.
 //
-// One clamp on the assembled frame rather than a width argument threaded into
-// View, renderRows and renderPreview: the invariant is about every line the
-// frame emits, and five call sites are five places for the next line added to
-// View to be silently exempt. The clamp cannot know what it is cutting, which is
-// what the fix wants — truncate, never re-layout.
+// A width <= 0 means no truncation: width is 0 until the first WindowSizeMsg,
+// and clamping to 0 would draw the first frame as nothing.
 //
-// A width of zero or less means no truncation. Width is 0 until the first
-// tea.WindowSizeMsg arrives, and a clamp to 0 would draw the first frame as
-// nothing at all.
-//
-// The w <= 0 guard is defensive rather than load-bearing today, and deleting it
-// is the one change here no test catches: lipgloss applies MaxWidth only when it
-// is > 0, so the clamp is already a no-op at a zero or negative width. Keep it
-// anyway. It states the contract where the width is read instead of borrowing it
-// from a library, and it is the difference between a correct first frame and an
-// empty one the moment the truncation primitive changes.
-//
-// The cutting is lipgloss's MaxWidth, which per line delegates to
-// ansi.Truncate. Two properties are load-bearing and neither is true of a byte
-// or rune slice: it measures in display cells, and it copies escape sequences
-// through even past the cut. renderRows hands this function alias and detail
-// strings that have already been through highlight() and style.Render(), so
-// slicing one would emit a half-written escape sequence and corrupt every line
-// after it.
-//
-// Rendering line by line rather than handing the whole frame to a single Render
-// call is deliberate: lipgloss also runs horizontal alignment on a multi-line
-// render, which pads every short line out to the longest one.
-//
-// This was two functions until the frame stopped drawing a border. The content
-// was clamped to the width inside that border and the finished box to the pane,
-// which were two different widths and so needed one shared implementation.
-// There is one width now — the frame draws inside herdr's border, not its own —
-// so there is one clamp.
+// lipgloss's MaxWidth is load-bearing over a byte or rune slice: it measures in
+// display cells and copies escape sequences through even past the cut, so an
+// already-styled line is not left with a half-written escape.
 func (m model) clampToWidth(frame string) string {
 	w := m.innerWidth()
 	if w <= 0 {
@@ -565,24 +503,17 @@ func (m model) renderPreview(s styles) string {
 }
 
 // renderWarnings draws the footer's warning block: the first maxWarnings
-// warnings as they were written, then "… N more" for the ones that did not fit.
-// An empty string is the no-warnings case, which View writes harmlessly.
+// warnings as written, then "… N more" for the rest. An empty string is the
+// no-warnings case, which View writes harmlessly.
 //
-// The text rather than the count that shipped. A count tells the operator that
-// something is wrong and nothing about what, and this footer is the only place
-// these ever appear: the picker is a pane entrypoint, so the stderr the connect
-// verb writes its half of the same policy to prints nowhere the operator reads.
+// The text rather than a count: a count says something is wrong and nothing
+// about what, and this footer is the only place these ever appear — the picker
+// is a pane entrypoint, so the stderr the connect verb uses prints nowhere the
+// operator reads. "more" rather than the host list's "off screen" because this
+// list is always drawn from the top.
 //
-// "more" rather than the host list's "off screen", against the same count of
-// what is not shown. The two notices differ because the two lists do: window()
-// scrolls, so its hidden rows lie in both directions, while this list is always
-// drawn from the top and the ones it drops are always the ones after it.
-//
-// Over-wide warnings are truncated by clampToWidth like every other line,
-// rather than wrapped. A wrapped footer line is two screen rows that
-// warningLines counted as one — the overflow commit 58c9762 closed — and a
-// truncated warning still leads with the file and position the operator needs,
-// which is more than the count it replaces carried at any width.
+// Over-wide warnings are truncated, not wrapped: a wrapped line is two screen
+// rows that warningLines counted as one.
 func (m model) renderWarnings(s styles) string {
 	shown := m.opts.Warnings
 	if len(shown) > maxWarnings {
@@ -599,18 +530,14 @@ func (m model) renderWarnings(s styles) string {
 }
 
 // oneLine folds s onto a single line, so one warning costs the one row
-// warningLines reserved for it.
+// warningLines reserved for it. Warnings are opaque strings built outside this
+// package, and pluginconfig's errors.Join separates multiple rejected keys with
+// a newline. clampToWidth cannot catch that — by the time the frame is
+// assembled, an embedded newline is indistinguishable from a line View meant to
+// emit.
 //
-// Warnings are opaque strings built outside this package, and one of them is
-// multi-line today: pluginconfig returns errors.Join when more than one key is
-// rejected, and errors.Join's Error() separates them with a newline. clampToWidth
-// cannot cover this the way it covers an over-wide line — by the time the frame
-// is assembled, an embedded newline is indistinguishable from a line View meant
-// to emit, so the row is already spent.
-//
-// FieldsFunc rather than a replace, so a "\r\n" pair collapses to one space
-// instead of two and a lone carriage return cannot send the rest of the warning
-// back over the start of its own line.
+// FieldsFunc rather than a replace, so "\r\n" collapses to one space and a lone
+// carriage return cannot overwrite the start of its own line.
 func oneLine(s string) string {
 	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
 		return r == '\n' || r == '\r'

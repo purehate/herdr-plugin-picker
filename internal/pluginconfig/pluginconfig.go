@@ -60,23 +60,19 @@ func unusable() Config {
 // LoadDir reads dir/config.toml over the defaults. A missing file is not an error.
 //
 // LoadDir ALWAYS returns a usable Config. When the file decodes with only known
-// keys, every key the operator got right is kept and each invalid value falls
-// back to its own default. When the file cannot be read, is malformed, or names
-// an unknown key, nothing is kept and Probe is forced off — see unusable. A
-// non-nil error means at least one key was rejected. Callers must report that
-// error and then use the returned Config — NOT discard it for Defaults(). Doing
-// that would undo a valid `probe = false` because of an unrelated bad value,
-// sending scan traffic the config asked it not to.
+// keys, each invalid value falls back to its own default; when it cannot be
+// read, is malformed, or names an unknown key, nothing is kept and Probe is
+// forced off (see unusable). A non-nil error means at least one key was
+// rejected — report it and then use the returned Config, NOT Defaults(), which
+// would undo a valid `probe = false` because of an unrelated bad value.
 func LoadDir(dir string) (Config, error) {
 	cfg := Defaults()
 	// Deliberately fails OPEN (Probe stays true) where an unreadable file fails
-	// closed. The difference is evidence of operator intent. An empty dir means
-	// no config location was supplied at all — the env var is unset, so we are
-	// running outside herdr — and a location we were never given tells us
-	// nothing about what the operator wants; the documented defaults are the
-	// honest answer. A file that exists but will not parse is the opposite:
-	// the operator wrote something we failed to read, and it may well have been
-	// `probe = false`. Only that second case earns the traffic opt-out.
+	// closed: an empty dir means no config location was supplied at all, so the
+	// documented defaults are the honest answer. A file that exists but will not
+	// parse is the opposite — the operator wrote something we failed to read,
+	// and it may well have been `probe = false`, so only that case earns the
+	// traffic opt-out.
 	if dir == "" {
 		return cfg, nil
 	}
@@ -89,11 +85,10 @@ func LoadDir(dir string) (Config, error) {
 	}
 	decoder := toml.NewDecoder(bytes.NewReader(raw)).DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
-		// go-toml applies keys as it parses and stops at the syntax error, so
-		// cfg now holds whatever happened to sit above it. Strict decoding also
-		// rejects unknown keys: without it, a misspelled `proeb = false` is
-		// silently ignored and probing stays on. In either case we cannot trust
-		// the partial result, so discard it and fail probing closed.
+		// go-toml applies keys as it parses and stops at the error, so cfg now
+		// holds whatever sat above it. Strict decoding also rejects unknown
+		// keys: without it a misspelled `proeb = false` is silently ignored and
+		// probing stays on. Either way the partial result is untrustworthy.
 		return unusable(), fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 
