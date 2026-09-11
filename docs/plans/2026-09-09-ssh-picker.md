@@ -7513,7 +7513,7 @@ Expected: `config check` prints exactly `config: ok`, then the reload succeeds. 
 
 `config check` was run read-only during planning and returns `config: ok` on the current config, so a diagnostic here means the block just added in Step 3 caused it. `reload-config` was deliberately **not** run during planning: it mutates the running server's state, and the operator's session was live. If the new binding does not take effect, `herdr config reset-keys` backs up `config.toml` and strips custom keybindings — that is the recovery path, and it removes the operator's other sixteen bindings too, so read the backup path it prints before relying on it.
 
-- [ ] **Step 5: Smoke-test the popup by hand** — _unticked: needs the operator at the keyboard._
+- [ ] **Step 5: Smoke-test the popup by hand** — _partly done. Items 1-1k are **confirmed by the operator on screen**. Items 3, 4 and 12 were **measured under a pty** (note after item 13). Items 2 and 5-11 still need the operator at the keyboard: they are the ones that depend on the operator's own `~/.ssh/config` or on herdr placing, focusing and labelling a pane._
 
 Press `prefix+i`. Verify each of these, in order. Items 1a-1k are the frame itself, and they are the ones to look at first: they are what `cbd1249`, `ed23d73`, `cdf54f3` and `2dab313` changed, and a wrong accent here means the config resolution regressed rather than the theme being wrong.
 
@@ -7525,15 +7525,15 @@ The frame's target is herdr's own **settings dialog**, which is the floating box
    - 1c. `↵ split` in the footer is an **inverted chip**; the remaining hints are muted
    - 1d. Typing a query underlines the matched characters on the banded row and accents them on every other row
    - 1e. The hostnames form **one column**, not a ragged edge stepping with each alias's length
-   - 1f. The list **fills the popup**. Blank space below the last host, with more hosts than rows drawn, means a row ceiling is back — the popup's size is the operator's to set on the keybinding (`width`/`height`), and the plugin's job is to fill whatever it is handed. If the popup is simply taller than the host list, shrink the binding; that is config, not a bug. The binding is `width = "94"`, `height = "28"` in cells, which was `60%`/`60%`: the plugin fills what it is given, so a percentage of a large terminal is a wall rather than a dialog.
+   - 1f. The list **fills the popup**. Blank space below the last host, with more hosts than rows drawn, means a row ceiling is back — the popup's size is the operator's to set on the keybinding (`width`/`height`), and the plugin's job is to fill whatever it is handed. If the popup is simply taller than the host list, shrink the binding; that is config, not a bug. The binding is `width = 94`, `height = 28` in cells, which was `60%`/`60%`: the plugin fills what it is given, so a percentage of a large terminal is a wall rather than a dialog. **Bare integers, not quoted** — `herdr`'s `PopupSize` is an integer cell count _or_ a percentage string matching `^(100|[1-9][0-9]?)%$`, and nothing else. `width = "94"` is not a smaller number, it is a `TOML parse error at line 311, column 9` that stops the whole config loading. Measured by writing it that way first.
    - 1g. A **blank padding row** opens and closes the frame, so nothing touches herdr's border. Content flush against the border reads as a pane with a line round it rather than as a dialog.
    - 1h. The title `ssh` is **plain foreground, not accent and not bold**. It labels an input; an accent title competes with the cursor band for the eye. Accent in the title means the de-accenting in `2dab313` regressed — this is the one item where the _absence_ of accent is correct, so read it against item 1 rather than with it.
    - 1i. The rule under the title is **inset two columns on both sides**, landing on the same column the title and the nav hints start at. A rule running the full pane width while everything around it is indented is a divider drawn across a dialog rather than the dialog's own.
    - 1j. The footer is **two lines**: `↑↓ select  ^o preview  ^u clear` left-aligned at the frame indent, then the action keys centred under the list with `↵ split` as the chip. One crammed line with `·` separators is the old footer.
    - 1k. Aliases start on the **same column whether or not the cursor is on them** — the `▸` sits in the gutter between the frame indent and the alias, so the list does not shift sideways as the cursor moves through it.
 2. The `colima` host from the existing `Include` is present — the include chain resolved
-3. Typing filters the list; the cursor snaps back to the top
-4. Status markers fill in shortly after the box opens (`●` reachable, `○` not); first paint did not wait on the network
+3. Typing filters the list; the cursor snaps back to the top — **measured**, see the pty note below
+4. Status markers fill in shortly after the box opens (`●` reachable, `○` not); first paint did not wait on the network — **measured**, see the pty note below
 5. `enter` splits the current pane and lands at an ssh prompt for the selected host
 6. The popup closed itself after acting
 7. The new pane's title reads `ssh:<alias>`
@@ -7541,8 +7541,29 @@ The frame's target is herdr's own **settings dialog**, which is the floating box
 9. Selecting it again focuses the existing pane instead of opening a second one
 10. `^n` on that same host does open a second pane
 11. `^t` opens a tab, `^z` opens a zoomed pane
-12. `^o` toggles the preview, and the preview shows a `source <file>:<line>` line
-13. `esc` closes the popup and changes nothing
+12. `^o` toggles the preview, and the preview shows a `source <file>:<line>` line — **measured**, see the pty note below
+13. `esc` closes the popup and changes nothing — **half measured**: the picker exits `0` with no error output, but that was outside a popup, so "changes nothing" is still an operator observation
+
+**Items 3, 4 and 12 were driven without the operator, under a pty against a
+synthetic `HOME`.** Worth writing down because a Bubble Tea program cannot be
+exercised from a pipe: it opens `/dev/tty` and asks the kernel for the window
+size by ioctl, so the run needs a real pty with an explicit `TIOCSWINSZ`
+(94×28 here, matching the binding) before it will render anything. A synthetic
+`HOME` is what keeps this off the operator's real config — `sshConfigPath()`
+goes through `os.UserHomeDir()`, which honours `$HOME` on unix — and every
+`HERDR_*` variable was stripped from the child so the run could not reach the
+live server or pick up the operator's plugin config.
+
+What it showed, against three synthetic hosts: typing `b` narrowed the list to
+`bravo` alone with the cursor on it, `^u` restored all three and emptied the
+query, `^o` removed the preview block and its `─────` separator, the preview
+carried `source …/.ssh/config:4`, the first frame drew no status markers and a
+later frame drew `○` on the two probed hosts, and `esc` exited 0.
+
+This covers the parsing, the filtering, the probe's asynchrony and the frame —
+everything that does not depend on herdr. It does **not** cover placement,
+focus, labelling or teardown, which is why items 5-11 and 13 are still the
+operator's.
 
 Then resize the pane deliberately short — roughly 6 to 8 rows — and check three more.
 These are the ones unit tests cannot reach: `view_test.go` asserts how many lines
@@ -7556,7 +7577,7 @@ lines is not observable from Go.
 18. Run one that **exits zero** — connect, then type `exit` at the remote shell — and check `herdr pane list` again. Record whether the pane is reaped or persists. Both are defensible; the plan needs to know which one herdr actually does.
 19. If it persists, check whether it **keeps its `ssh:<alias>` label**. A labelled but dead pane is precisely what `performSelection`'s reuse scan matches on, so the next pick would focus a corpse instead of opening a session — the same defect class as `f620f4a`, reached from the other side. None of items 17-19 is covered by a unit test, which is why they are here.
 
-- [ ] **Step 6: Verify the label round-trip from the CLI** — _unticked: needs a live herdr session; the operator runs this task by hand._
+- [ ] **Step 6: Verify the label round-trip from the CLI** — _unticked, and it is **Step 5 item 5 that blocks it**, not the live session: herdr is running and this command works today. Until a host has been picked there is simply no session pane for the label to be on. Run against the live server this session, it returned only `Explorer` labels — which is the correct answer for "no host picked yet", and would be indistinguishable from a labelling defect if run before Step 5. Perform Step 5 first, then this._
 
 ```bash
 herdr pane list | jq -c '[.result.panes[] | select(.label) | {pane_id, label}]'
@@ -7965,136 +7986,36 @@ golangci-lint release can turn this repo's CI red with no change to this repo.
 If that happens, pin the minor (`version: v2.1`) rather than deleting the lint
 step.
 
-- [x] **Step 3: Write the README** — _measured at `250914b`; fence re-embedded at `fc01b5e`. `20f6166` added the `## Development` section to `README.md` and left this block behind, so the `250914b` stamp stopped certifying the current fence: it is a claim about that sha, and the fence changed after it. Byte-identical to `README.md` again as of `4844fd3`, 105 lines against 105._
+- [x] **Step 3: Write the README** — _the embedded copy is gone; `README.md` is the artifact and this step no longer restates it. The stamp history that made that necessary is under the pointer below._
 
 `README.md`:
 
-````markdown
-# herdr-ssh
+**The README is not reproduced here. Read `README.md` — it is the artifact.**
 
-A floating fuzzy picker over the hosts in your `~/.ssh/config`. Pick one, get an
-SSH session in a new pane, tab, or zoomed pane. Modeled on tmux's `sesh` picker.
+This block used to carry a byte-for-byte copy, and that copy went stale on
+three of the four edits that touched the README: `20f6166` added a
+`## Development` section and left it behind, `fc01b5e` re-embedded it,
+`4844fd3` re-certified it at 105 lines against 105, and the install section
+was rewritten again after publication. A duplicate that has to be re-certified
+after every edit is not documentation of the README, it is a second README
+that nobody runs `prettier` over and nobody reads.
 
-## Install
+What the rewrite after publication fixed, both of which mattered because the
+repo is public by then:
 
-```bash
-herdr plugin install purehate/herdr-plugin-ssh
-```
+- **"Once this repo is published, the shorter route works too"** — it is
+  published; the conditional was describing a state that no longer held.
+- **The one documented binding was `type = "plugin_action"`, which docks.** The
+  README's own first line promises "a floating fuzzy picker", and that binding
+  does not produce one. Only `type = "popup"` floats. A reader following the
+  install section got a docked pane and no way to tell whether the plugin or
+  their config was at fault. Both bindings are documented now, each labelled
+  with what it actually does, and the popup form carries the bare-integer
+  `width`/`height` warning — `width = "94"` is a TOML parse error that stops
+  the whole config loading.
 
-Then bind a key in `~/.config/herdr/config.toml`:
-
-```toml
-[[keys.command]]
-key = "prefix+i"
-type = "plugin_action"
-command = "purehate.herdr-ssh.open-picker"
-```
-
-`prefix+i` is a suggestion. Avoid `prefix+r` — that is herdr's built-in resize mode.
-
-## Keys
-
-| Key                    | Action                               |
-| ---------------------- | ------------------------------------ |
-| type                   | fuzzy filter on alias, then hostname |
-| `backspace`            | delete the last character            |
-| `^w`                   | delete the last word of the query    |
-| `^u`                   | clear the query                      |
-| `↑` / `↓`, `^k` / `^j` | move the cursor                      |
-| `enter`                | ssh in a split                       |
-| `^t`                   | ssh in a new tab                     |
-| `^z`                   | ssh in a zoomed pane                 |
-| `^n`                   | force a new pane even if one exists  |
-| `^o`                   | toggle the host preview              |
-| `esc`, `^c`            | close                                |
-
-If you came from `fzf`, note that `^n` is a placement key here, not cursor-down —
-`^j` / `^k` move the cursor.
-
-## Markers
-
-| Marker  | Meaning                                       |
-| ------- | --------------------------------------------- |
-| ▪       | a session for this host is already open       |
-| ●       | port reachable                                |
-| ○       | port not reachable                            |
-| ~       | behind a `ProxyJump`, deliberately not probed |
-| (blank) | not probed yet                                |
-
-Hosts behind a `ProxyJump` are not probed — a direct dial would test the wrong
-network and report a false "down". `▪` wins over the reachability markers,
-because it is the one that changes what `enter` does.
-
-## Configuration
-
-Optional, at `~/.config/herdr/plugins/config/purehate.herdr-ssh/config.toml`
-(the directory herdr passes as `$HERDR_PLUGIN_CONFIG_DIR`). Ask herdr rather
-than assuming the path:
-
-```bash
-herdr plugin config-dir purehate.herdr-ssh
-```
-
-```toml
-probe = true                  # TCP-check hosts
-probe_timeout_ms = 300
-split_direction = "right"     # or "down"
-show_preview = true
-reuse_panes = true            # focus an existing ssh:<host> pane instead of opening another
-hidden = []                   # globs matched against the alias
-extra_config_paths = []       # additional ssh config files to read
-ssh_args = []                 # flags passed to ssh, before the destination
-```
-
-## What it understands
-
-Reads `~/.ssh/config` the way ssh does: first value wins, `Host *` and glob
-patterns supply defaults without being selectable, `!negated` patterns are
-honored, and `Include` is expanded with globbing and a cycle guard. `Match`
-blocks are skipped — evaluating `Match exec` would mean running commands to
-build a list.
-
-## Direct connect
-
-Skip the picker entirely from a shell in any pane:
-
-```bash
-herdr-ssh connect nixos-dev
-herdr-ssh connect nixos-dev --placement tab
-```
-
-## Development
-
-Do not run `go mod tidy`. Every entry in `go.mod` carries `// indirect`,
-including the three modules the code imports directly, so a reflexive tidy
-produces a real dependency-metadata diff — it reclassifies three requires and
-pins three test-only modules in `go.sum` — that has nothing to do with your
-change. Correcting that metadata is a deliberate, separate commit, not a
-drive-by.
-
-> **Superseded — read `README.md`, not this copy.** The `go mod tidy`
-> instruction above is now the opposite of the branch's position. The operator's
-> ruling was tidy-and-gate: `go.mod` was tidied, and CI runs `go mod tidy` and
-> fails on any resulting diff. "Do not run it" would put a reader in a fight
-> with a gate that is going to win.
->
-> The text is kept rather than rewritten because its reasoning was accurate
-> about the tree it described — a reflexive tidy there did produce a metadata
-> diff unrelated to your change. What changed is that the fix removed the cause
-> instead of continuing to warn about it, which is the disposition worth
-> remembering: a standing "do not run X" is a defect with a workaround attached.
->
-> The `## What it understands` block above is behind `README.md` too — it
-> predates the `SSHCONF_NEVERMATCH` rule, the include depth cap, and the
-> statement that only `~/.ssh/config` and its includes are read. Same
-> disposition. Task 21's sample is a plan artifact and not the shipped file;
-> cf. deviation 11 on the `extra_config_paths` sample left standing for the
-> same reason.
-
-## License
-
-MIT
-````
+The design intent the step was written to capture, which the file still has to
+satisfy, is below.
 
 Two things in this README were wrong when written and are corrected above; both were caught by checking it against the committed code and the live herdr rather than by rereading it:
 
@@ -8322,7 +8243,7 @@ file failing on the shortest possible timescale: naming instances reads as
 exhaustive and goes stale the moment another one lands, whereas "touched again
 since" cannot. Use `git log -- <path>` when the actual list is what you need.
 
-- [ ] **Step 7: Publish (operator decision — confirm before running)** — _unticked: publish is an operator decision and was explicitly not authorized._
+- [x] **Step 7: Publish (operator decision — confirm before running)** — _authorized by the operator and done: the repo is live and public at https://github.com/purehate/herdr-plugin-ssh with the `herdr-plugin` topic set. Both commands below ran clean; `gh repo view` reports `{"isPrivate":false,"repositoryTopics":[{"name":"herdr-plugin"}]}`. Only `refs/heads/main` was pushed — `feat/ssh-picker` stays a local 202-commit archive. **The install-path verification further down is the half still outstanding** (see the note under it)._
 
 Publishing pushes to a public repo. Confirm with the operator first, then:
 
@@ -8330,6 +8251,20 @@ Publishing pushes to a public repo. Confirm with the operator first, then:
 gh repo create purehate/herdr-plugin-ssh --public --source=. --push
 gh repo edit purehate/herdr-plugin-ssh --add-topic herdr-plugin
 ```
+
+**Before the push, scan the whole history, not just the worktree.** This repo was
+developed against a penetration-testing workstation, its fixtures imitate a real
+`~/.ssh/config`, and the operator's screenshots during review carried real
+hostnames, real internal and public addresses, and a real username. Making the
+repo public makes every reachable commit public with it, and a rewrite after the
+fact does not unpublish what was already fetched or indexed. What ran here:
+`git log -p --all` (2,450,369 chars) plus the worktree (908,435 chars), grepped
+for the specific values seen in review and for the generic classes — public IPv4
+excluding RFC1918/RFC5737/loopback/link-local, RFC1918, home paths outside this
+project, `.ssh/` filenames, `BEGIN ... PRIVATE KEY`, `AKIA[0-9A-Z]{16}`,
+`gh[pousr]_`. Every hit triaged to a synthetic fixture; none of the real values
+appeared anywhere. Keep new fixtures on RFC 2606 (`.invalid`, `.example`) and
+RFC 5737 (`192.0.2.0/24`) so this stays true.
 
 The `herdr-plugin` topic plus the root `herdr-plugin.toml` is all the index
 needs — there is no submission queue. There is no `herdr plugin search`, so
@@ -8345,6 +8280,27 @@ Expected: the plugin installs from GitHub and appears in `plugin list` with no
 error field. Re-run the Task 20 smoke test against the installed copy — the
 build step runs on the install host, so a missing `go` toolchain shows up here
 and nowhere earlier.
+
+**Not run — this one needs the operator to say go, and it is the only step here
+that does.** Everything else in Task 21 either reads state or writes to GitHub.
+This sequence mutates the operator's live herdr: `unlink` drops the dev tree
+they are still developing in, and `install` replaces it with a GitHub copy under
+`~/.config/herdr/plugins/github/`. Two specifics worth knowing before choosing:
+
+- The `prefix+i` popup binding does **not** go through the plugin — it execs
+  `/Users/operator/DEVELOPMENT/herdr-plugin-ssh/bin/herdr-ssh` by absolute path. So
+  unlinking would not break the picker, and the swap would not exercise the
+  binding either. What it does exercise is the `plugin open-picker` action and
+  the manifest's `build` step.
+- It is reversible — `herdr plugin uninstall purehate.herdr-ssh` then
+  `herdr plugin link ~/DEVELOPMENT/herdr-plugin-ssh` puts it back — but only
+  one copy of a given `plugin_id` loads at a time, so the dev link is inert for
+  as long as the installed copy is present.
+
+The thing it genuinely catches, and nothing earlier does: the manifest's
+`go build -o bin/ ./cmd/herdr-ssh` runs on the _install host_, against a
+freshly-cloned tree with no `bin/` in it. A toolchain or module problem that the
+dev tree papers over surfaces here first.
 
 ---
 
@@ -8394,11 +8350,13 @@ byte-identical after both invocations, at `3577905575 1555` and
 - [x] `go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...` — **exit 0, which is the entire pass condition.** Measured at `250914b` on a clean export and re-measured at `d643b6a`: exit 0, zero bytes on stdout _and_ stderr. The silence is real but is not the gate — this tool prints nothing whatsoever when clean, so a run that linted nothing looks identical and only the exit code separates them. (`0 issues.` is golangci-lint's summary line, not this tool's — see Task 21 Step 5, which measures golangci-lint and correctly uses that string.)
 - [x] `go run github.com/kisielk/errcheck@v1.20.0 ./...` — **exit 0, which is the entire pass condition.** Measured at `250914b` on a clean export and re-measured at `d643b6a`: exit 0, zero bytes on both streams. `errcheck: 0` here is a _passed prediction_, not merely a clean run — `9e9dc9b` threaded a writer through all seven `os.Stderr` diagnostic sites, which converts them from errcheck-excluded to errcheck-flagged, and landed the explicit `_, _ =` discards in the same commit.
 - [x] `go build -o bin/ ./cmd/herdr-ssh` — exit 0 and `bin/herdr-ssh` present. Measured at `250914b` on a clean export.
-- [ ] `herdr plugin list --json | rg herdr-ssh` — plugin loads with no error field — _unticked: requires a running herdr server; operator-run._
-- [ ] `prefix+i` opens the overlay with real hosts from `~/.ssh/config` — _unticked: requires a live herdr session and a real `~/.ssh/config`; operator-run._
-- [ ] `enter` lands at an ssh prompt in a new split — _unticked: requires a live herdr session; operator-run._
-- [ ] The session pane is labeled `ssh:<alias>` in `herdr pane list` — _unticked: requires a live herdr session; operator-run._
-- [ ] Re-picking an open host focuses it; `^n` opens a second pane — _unticked: requires a live herdr session; operator-run._
-- [ ] `^t` and `^z` place a tab and a zoomed pane respectively — _unticked: requires a live herdr session; operator-run._
-- [ ] `esc` closes cleanly with no pane created — _unticked: requires a live herdr session; operator-run._
-- [ ] A config with a broken `Include` still lists every other host, with a warning count in the footer — _unticked: requires a live herdr session and a hand-broken `Include`; operator-run._
+- [x] `herdr plugin list --json | rg herdr-ssh` — plugin loads with no error field. Measured against the running 0.9.0 server: `{"plugin_id":"purehate.herdr-ssh","name":"SSH Picker","version":"0.1.0","enabled":true,"source_kind":"local","has_error":false}`. `has_error` is `has("error")` rather than a grep for the word — `rg herdr-ssh` matches the whole one-line JSON document for every plugin, so the plugin's own error field and a neighbour's are the same hit. `source_kind` is `local`: this is the linked dev tree, not the GitHub install, which is the separate check in Step 7.
+- [x] `prefix+i` opens the picker with real hosts from `~/.ssh/config` — operator-confirmed on screen. **"the overlay" is stale wording:** the binding that ships is `type = "popup"`, which is what renders a floating box; the `overlay` placement in `herdr-plugin.toml` docks and is the other entrypoint. Both exist, and this gate is about the popup.
+- [ ] `enter` lands at an ssh prompt in a new split — _unticked: needs the operator at the keyboard. Everything up to the exec is covered by `cmd/herdr-ssh` unit tests; what is not covered is herdr actually placing the split and ssh actually answering._
+- [ ] The session pane is labeled `ssh:<alias>` in `herdr pane list` — _unticked: depends on the gate above having been performed. Until a host is picked there is no pane to carry the label, and `pane list` currently reports no `ssh:` label for exactly that reason — absence here is not yet evidence of a defect._
+- [ ] Re-picking an open host focuses it; `^n` opens a second pane — _unticked: needs the operator at the keyboard._
+- [ ] `^t` and `^z` place a tab and a zoomed pane respectively — _unticked: needs the operator at the keyboard._
+- [ ] `esc` closes cleanly with no pane created — _partially measured, and unticked because the halves were measured separately rather than in one pass. "Closes cleanly": driven under a pty, `esc` exits **0** with no error output. "No pane created": a 60s before/after poll of the `pane_id` set across an operator-opened picker held at 22 panes. Neither run observed an `esc` close **inside a live popup**, which is the one thing this gate is for._
+- [x] A config with a broken `Include` still lists every other host, and the footer says so. Driven end-to-end under a pty against a synthetic `HOME` — the real binary, a real file on disk, the real footer. All three readable hosts rendered, and the footer carried `…/.ssh/config:1: include unreadable: …/.ssh/conf.d/locked`. **Two corrections to how this gate was written:**
+  - _"a warning count" is wrong._ The footer renders the warning **text**; the count was what shipped first and `view.go:564` records why it was replaced ("A count tells the operator that something is wrong and nothing about what"). An operator running this gate as written would look for a number, not find one, and fail correct code.
+  - _"a broken `Include`" is ambiguous, and one of its two readings is silent by design._ A **missing** target is deliberately not a warning — `sshconfig.go:474` verified that against OpenSSH_10.3p1, since warning there would false-positive on an optional tool-managed include. The warning case is a **present-but-unreadable** target (mode `000`) or a malformed pattern. Measured both in the same config: the unreadable include on line 1 warned, the missing one on line 2 correctly did not.
