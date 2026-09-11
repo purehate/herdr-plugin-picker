@@ -184,8 +184,10 @@ ssh_args = []                 # non-routing flags passed to ssh before the desti
 `ssh_args` accepts ordinary client options such as `-v`, `-A`, or
 `-o ConnectTimeout=5`. Options that can change the displayed connection — for
 example `-F`, `-p`, `-J`, `-l`, `-i`, or `-o HostName=...` — are rejected with
-a visible warning. Put those settings in `~/.ssh/config`; otherwise the preview
-and probe could describe one destination while `ssh` connects to another.
+a visible warning, as are options that run a command on your machine
+(`-o LocalCommand`, `PermitLocalCommand`, `KnownHostsCommand`). Put those
+settings in `~/.ssh/config`; otherwise the preview and probe could describe one
+destination while `ssh` connects to another.
 
 ## What it understands
 

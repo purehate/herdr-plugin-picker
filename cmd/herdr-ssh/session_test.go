@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,15 +20,27 @@ func TestSessionArgvPutsFlagsBeforeDestination(t *testing.T) {
 	// ssh parses `ssh [options] destination [command]`. Flags after the
 	// destination become a remote command, so order is a correctness issue.
 	got := sessionArgv([]string{"-o", "ConnectTimeout=5"}, "nixos-dev")
-	want := "ssh -o ConnectTimeout=5 nixos-dev"
+	want := "ssh -o ConnectTimeout=5 -- nixos-dev"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("argv = %v, want %q", got, want)
 	}
 }
 
 func TestSessionArgvWithoutFlags(t *testing.T) {
-	if got := sessionArgv(nil, "web1"); strings.Join(got, " ") != "ssh web1" {
+	if got := sessionArgv(nil, "web1"); strings.Join(got, " ") != "ssh -- web1" {
 		t.Fatalf("argv = %v", got)
+	}
+}
+
+func TestSessionArgvTreatsADashAliasAsTheDestination(t *testing.T) {
+	// An ssh config may name a host with a leading dash. Without the `--`, ssh's
+	// option parser claims it and `Host -oProxyCommand=...` runs a command
+	// instead of connecting. The whole slice, so a dropped separator is caught
+	// rather than absorbed into a substring match.
+	got := sessionArgv(nil, "-oProxyCommand=echo")
+	want := []string{"ssh", "--", "-oProxyCommand=echo"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("argv = %q, want %q", got, want)
 	}
 }
 
@@ -48,7 +61,7 @@ func TestPrepareSessionRenamesOwnPane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareSession: %v", err)
 	}
-	if strings.Join(argv, " ") != "ssh nixos-dev" {
+	if strings.Join(argv, " ") != "ssh -- nixos-dev" {
 		t.Errorf("argv = %v", argv)
 	}
 	if len(calls) != 1 || strings.Join(calls[0], " ") != "pane rename w5:pC ssh:nixos-dev" {
@@ -73,7 +86,7 @@ func TestPrepareSessionToleratesRenameFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareSession: %v", err)
 	}
-	if strings.Join(argv, " ") != "ssh web1" {
+	if strings.Join(argv, " ") != "ssh -- web1" {
 		t.Fatalf("argv = %v", argv)
 	}
 	// The consequence is deferred and invisible: this session connects fine, and
@@ -114,7 +127,7 @@ func TestPrepareSessionPassesConfiguredSSHArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareSession: %v", err)
 	}
-	if got, want := strings.Join(argv, " "), "ssh -o ConnectTimeout=5 nixos-dev"; got != want {
+	if got, want := strings.Join(argv, " "), "ssh -o ConnectTimeout=5 -- nixos-dev"; got != want {
 		t.Fatalf("argv = %q, want %q", got, want)
 	}
 }
@@ -424,7 +437,7 @@ func TestSessionExecsSSHWithTheArgvAndEnvironmentItBuilt(t *testing.T) {
 	// alone leaves the half that silently discards the operator's ssh_args
 	// alive, and matching on a flag alone leaves the half that connects
 	// somewhere they did not ask for.
-	if want := "ARGV=-o ConnectTimeout=5 nixos-dev\n"; !strings.Contains(stdout, want) {
+	if want := "ARGV=-o ConnectTimeout=5 -- nixos-dev\n"; !strings.Contains(stdout, want) {
 		t.Errorf("stdout = %q,\nwant the exact argv line %q", stdout, want)
 	}
 	// $0 here is the path handed to execve, not argv[0]: for a `#!` script the
@@ -468,7 +481,7 @@ func TestSessionKeepsTheValidKeysOfARejectedConfig(t *testing.T) {
 		t.Fatalf("ssh never executed — exec failed instead.\ncode = %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
 	wantDiagnostics(t, stdout, "split_direction", "ignoring the rejected keys")
-	if want := "ARGV=-o ConnectTimeout=5 nixos-dev\n"; !strings.Contains(stdout, want) {
+	if want := "ARGV=-o ConnectTimeout=5 -- nixos-dev\n"; !strings.Contains(stdout, want) {
 		t.Errorf("stdout = %q,\nwant %q — the rejected key took the valid ssh_args with it", stdout, want)
 	}
 }

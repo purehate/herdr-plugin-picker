@@ -119,9 +119,10 @@ func LoadDir(dir string) (Config, error) {
 
 // validateSSHArgs accepts SSH client options while rejecting anything that
 // can make ssh resolve a different connection than the picker displayed and
-// probed. Values such as ConnectTimeout remain available through -o; routing,
-// identity and address-selection settings belong in ~/.ssh/config so there is
-// one source of truth for both paths.
+// probed, or run a command on this machine. Values such as ConnectTimeout
+// remain available through -o; routing, identity and address-selection
+// settings belong in ~/.ssh/config so there is one source of truth for both
+// paths.
 func validateSSHArgs(args []string) error {
 	const noValue = "AaCfGgKkMNnqsTtVvXxYy"
 	const withValue = "cDEeILmOQRSWw"
@@ -201,6 +202,18 @@ func validateSSHOption(value string) error {
 	}
 	if changesPreview[key] {
 		return fmt.Errorf("ssh_args -o %s can change the displayed connection; put it in ~/.ssh/config", key)
+	}
+	// Local command execution is not a preview mismatch, but it is the same
+	// kind of surprise in a list advertised as ordinary client flags, and it is
+	// the one that can do damage rather than merely mislead. ProxyCommand is
+	// already rejected above as a routing option; these are its siblings.
+	runsLocally := map[string]bool{
+		"knownhostscommand":  true,
+		"localcommand":       true,
+		"permitlocalcommand": true,
+	}
+	if runsLocally[key] {
+		return fmt.Errorf("ssh_args -o %s runs a local command; put it in ~/.ssh/config if you need it", key)
 	}
 	return nil
 }

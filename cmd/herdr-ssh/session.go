@@ -18,11 +18,17 @@ func sessionLabel(alias string) string { return labelPrefix + alias }
 
 // sessionArgv builds ssh's argv. Configured flags go before the destination;
 // anything after it would be sent to the remote shell as a command.
+//
+// The `--` keeps an alias from being read as a flag. An ssh config may name a
+// host with a leading `-`, and without the separator ssh's option parser claims
+// it: `Host -oProxyCommand=...` would hand ssh a proxy command instead of a
+// destination. With it, the alias is always the destination, which is what this
+// function intends.
 func sessionArgv(sshArgs []string, alias string) []string {
-	argv := make([]string, 0, len(sshArgs)+2)
+	argv := make([]string, 0, len(sshArgs)+3)
 	argv = append(argv, "ssh")
 	argv = append(argv, sshArgs...)
-	return append(argv, alias)
+	return append(argv, "--", alias)
 }
 
 // prepareSession labels this pane so the picker can find it again, then returns

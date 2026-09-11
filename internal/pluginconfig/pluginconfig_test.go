@@ -339,6 +339,23 @@ func TestValidateSSHArgsRejectsOptionsThatCanChangeThePreview(t *testing.T) {
 	}
 }
 
+func TestValidateSSHArgsRejectsOptionsThatRunLocalCommands(t *testing.T) {
+	// These do not change which host is reached, so the preview stays honest —
+	// but they execute a command on this machine, which an option list
+	// advertised as ordinary client flags should not quietly permit.
+	cases := [][]string{
+		{"-o", "LocalCommand=rm -rf /"},
+		{"-oLocalCommand=rm -rf /"},
+		{"-o", "PermitLocalCommand=yes"},
+		{"-oKnownHostsCommand=/tmp/x"},
+	}
+	for _, args := range cases {
+		if err := validateSSHArgs(args); err == nil {
+			t.Errorf("validateSSHArgs(%q) = nil, want rejection", args)
+		}
+	}
+}
+
 func TestLoadRejectsOnlyUnsafeSSHArgsKey(t *testing.T) {
 	cfg, err := LoadDir(writeConfig(t,
 		"probe = false\nhidden = [\"old-*\"]\nssh_args = [\"-F\", \"/tmp/other-config\"]\n"))
