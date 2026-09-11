@@ -1,7 +1,35 @@
 # herdr-ssh
 
+[![ci](https://github.com/purehate/herdr-plugin-ssh/actions/workflows/ci.yml/badge.svg)](https://github.com/purehate/herdr-plugin-ssh/actions/workflows/ci.yml)
+
 A floating fuzzy picker over the hosts in your `~/.ssh/config`. Pick one, get an
 SSH session in a new pane, tab, or zoomed pane. Modeled on tmux's `sesh` picker.
+
+```
+  ssh ▏
+  ──────────────────────────────────────────────────────────────────────────────────────────
+
+  ▸ ● staging      deploy@127.0.0.1:2022
+    ○ web1         deploy@web1.example
+    ○ db-primary   deploy@192.0.2.10
+    ○ bastion      deploy@bastion.example:2222
+    ~ behind-jump  via bastion
+    ─────
+    HostName      127.0.0.1
+    Port          2022
+    User          deploy
+    source        ~/.ssh/conf.d/staging.conf:1
+
+  ↑↓ select   ^o preview   ^u clear
+                      ^t tab   ^z zoom   ^n new    ↵ split    esc close
+```
+
+That is a real capture, not a mockup — the picker running against a throwaway
+config built from names RFC 2606 and RFC 5737 reserve for documentation, so
+nothing in it can be a host anyone owns. `staging` comes from an `Include`, and
+its `source` line is how you tell an include chain resolved from an alias that
+merely exists somewhere. `●` means the port answered, `○` means it did not, and
+`~` means the host is behind a `ProxyJump` and was deliberately left alone.
 
 ## Install
 
@@ -48,6 +76,48 @@ rather than a dialog.
 
 `prefix+i` is a suggestion. Avoid `prefix+r` — that is herdr's built-in resize
 mode.
+
+## What it does on your machine
+
+A herdr plugin is ordinary code running as your user, and herdr validates the
+manifest but does not sandbox the code. Its own documentation tells you to read
+a plugin before installing it. This one reads your SSH config, which is about
+the most alarming sentence a plugin can open with, so here is the whole of it.
+
+**Reads, and only reads, `~/.ssh/config` and the files it `Include`s.** Nothing
+outside that chain — a config `ssh` cannot see is a config this picker will not
+show you. It never writes to them.
+
+**Never opens your keys.** `IdentityFile` shows up in the preview because it is
+a line in your config; the file it points at is not read. No key, passphrase or
+credential is read, stored or sent anywhere.
+
+**Writes exactly one file:** the id of the pane you pressed the key in, under
+`$HERDR_PLUGIN_STATE_DIR`. That is what lets `enter` split the pane you were
+working in rather than whichever one herdr considers active by the time you
+choose a host.
+
+**Makes one TCP connection per host, if you let it.** That is the `●`/`○`
+marker: a connect to `HostName`:`Port`, 300 ms by default, no bytes sent and
+none read. It is a port scan of your own inventory and worth deciding about
+rather than inheriting — `probe = false` turns it off. Hosts behind a
+`ProxyJump` are skipped either way, since dialing them direct would test the
+wrong network and report a confident false "down". An unreadable or invalid
+plugin config turns probing **off** rather than falling back to on.
+
+**Does not implement SSH.** Picking a host `exec`s your own `ssh` with the
+alias, in a pane herdr opens for it. Your config, your keys, your agent, your
+`known_hosts`, your `ProxyJump`. If a host works by hand it works here, and
+failures read the same too.
+
+**Talks to herdr only through `$HERDR_BIN_PATH`** — open, close, rename and
+focus panes. There is no network client, no telemetry, and no other process it
+starts.
+
+Three direct dependencies, all Charm/TOML libraries, listed under
+[Development](#development). If you would rather read the code than this
+section, `internal/sshconfig` is the parser and `internal/probe` is the only
+thing that touches a socket.
 
 ## Keys
 
@@ -150,6 +220,17 @@ plus the hashes that verify it. None of them are stowaways: `go mod why -m
 <module>` reports a real path to every one, and `go list -m all` resolves 24
 modules for the build. If you find yourself wondering how something got in
 there, run that command rather than assuming.
+
+The frame at the top of this file is regenerated, not edited:
+
+```bash
+go build -o bin/ ./cmd/herdr-ssh && python3 scripts/capture-readme-frame.py
+```
+
+Its output is meant to replace that block verbatim. It runs the picker under
+tmux against a synthetic `$HOME`, so it cannot read your real SSH config, and on
+tmux's own socket, so it cannot see your real panes. Regenerate it when you
+change the view — a hand-tuned frame stops being a capture.
 
 `herdr-plugin.toml` is pinned by `cmd/herdr-ssh/manifest_test.go`. The pane ids,
 entrypoints and plugin id that the Go code hands to `herdr plugin pane open` are
