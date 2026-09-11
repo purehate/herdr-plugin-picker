@@ -7515,7 +7515,9 @@ Expected: `config check` prints exactly `config: ok`, then the reload succeeds. 
 
 - [ ] **Step 5: Smoke-test the popup by hand** — _unticked: needs the operator at the keyboard._
 
-Press `prefix+i`. Verify each of these, in order. Items 1a-1f are the frame itself, and they are the ones to look at first: they are what `cbd1249`, `ed23d73` and `cdf54f3` changed, and a wrong accent here means the config resolution regressed rather than the theme being wrong.
+Press `prefix+i`. Verify each of these, in order. Items 1a-1k are the frame itself, and they are the ones to look at first: they are what `cbd1249`, `ed23d73`, `cdf54f3` and `2dab313` changed, and a wrong accent here means the config resolution regressed rather than the theme being wrong.
+
+The frame's target is herdr's own **settings dialog**, which is the floating box the operator already recognises on this terminal. It is not reachable exactly: a popup keybinding exposes only `type`, `command`, `width` and `height`, and herdr draws the popup's border in `[ui].accent` with a `popup` label where the settings dialog's is white and unlabelled. Nothing in the config surface reaches that, so 1a stands as written — one border, herdr's. Everything inside it is 1g-1k.
 
 1. A floating box appears listing hosts from `~/.ssh/config`, in the accent color from `[ui].accent` (`#14e21a` on this machine) — **not** the built-in blue `#89b4fa`, which is what an unresolved `HERDR_CONFIG_PATH` silently falls back to
    - 1a. There is exactly **one** border, herdr's own, labelled `popup`. The frame draws none of its own. Two concentric boxes a cell apart is the defect `ed23d73` fixed, and herdr's cannot be turned off — if a second one is back, the frame regrew a border rather than herdr growing one.
@@ -7523,7 +7525,12 @@ Press `prefix+i`. Verify each of these, in order. Items 1a-1f are the frame itse
    - 1c. `↵ split` in the footer is an **inverted chip**; the remaining hints are muted
    - 1d. Typing a query underlines the matched characters on the banded row and accents them on every other row
    - 1e. The hostnames form **one column**, not a ragged edge stepping with each alias's length
-   - 1f. The list **fills the popup**. Blank space below the last host, with more hosts than rows drawn, means a row ceiling is back — the popup's size is the operator's to set on the keybinding (`width`/`height`), and the plugin's job is to fill whatever it is handed. If the popup is simply taller than the host list, shrink the binding; that is config, not a bug.
+   - 1f. The list **fills the popup**. Blank space below the last host, with more hosts than rows drawn, means a row ceiling is back — the popup's size is the operator's to set on the keybinding (`width`/`height`), and the plugin's job is to fill whatever it is handed. If the popup is simply taller than the host list, shrink the binding; that is config, not a bug. The binding is `width = "94"`, `height = "28"` in cells, which was `60%`/`60%`: the plugin fills what it is given, so a percentage of a large terminal is a wall rather than a dialog.
+   - 1g. A **blank padding row** opens and closes the frame, so nothing touches herdr's border. Content flush against the border reads as a pane with a line round it rather than as a dialog.
+   - 1h. The title `ssh` is **plain foreground, not accent and not bold**. It labels an input; an accent title competes with the cursor band for the eye. Accent in the title means the de-accenting in `2dab313` regressed — this is the one item where the _absence_ of accent is correct, so read it against item 1 rather than with it.
+   - 1i. The rule under the title is **inset two columns on both sides**, landing on the same column the title and the nav hints start at. A rule running the full pane width while everything around it is indented is a divider drawn across a dialog rather than the dialog's own.
+   - 1j. The footer is **two lines**: `↑↓ select  ^o preview  ^u clear` left-aligned at the frame indent, then the action keys centred under the list with `↵ split` as the chip. One crammed line with `·` separators is the old footer.
+   - 1k. Aliases start on the **same column whether or not the cursor is on them** — the `▸` sits in the gutter between the frame indent and the alias, so the list does not shift sideways as the cursor moves through it.
 2. The `colima` host from the existing `Include` is present — the include chain resolved
 3. Typing filters the list; the cursor snaps back to the top
 4. Status markers fill in shortly after the box opens (`●` reachable, `○` not); first paint did not wait on the network
