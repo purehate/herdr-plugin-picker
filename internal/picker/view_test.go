@@ -97,10 +97,17 @@ func screenRows(s string, width int) int {
 }
 
 // frameLines splits a rendered frame into the lines the terminal is asked to
-// draw, dropping the empty element after the trailing newline so a per-line
-// assertion does not report a phantom final line.
+// draw.
+//
+// It does not drop the empty element after the trailing newline, and used to.
+// That element was a phantom back when the newline was an accident of how the
+// frame was assembled; it is the frame's bottom padding row now, put there on
+// purpose and budgeted for by footerRows. Dropping it made lineCount disagree
+// with screenRows about the same frame by exactly one row — the discrepancy
+// that let the padding row be trimmed away with the whole suite still green.
+// The two agree now: lineCount(s) == screenRows(s, 0), by construction.
 func frameLines(s string) []string {
-	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
+	return strings.Split(s, "\n")
 }
 
 // manyHosts builds n hosts, more than any row budget under test, so the list is
@@ -547,10 +554,15 @@ func TestViewFooterIsAbsentWithoutWarnings(t *testing.T) {
 	m := newModel(Options{Hosts: manyHosts(3), Theme: theme.Default()})
 	out := stripANSI(renderSized(m, 200, 30))
 	lines := frameLines(renderSized(m, 200, 30))
-	// The hints are the true last line: the frame draws no bottom border, and
-	// View trims the newline after them rather than leaving a blank row below.
-	if last := stripANSI(lines[len(lines)-1]); !strings.Contains(last, "esc close") {
-		t.Errorf("the frame's last line is %q, want the key hints; something was drawn below them:\n%s", last, out)
+	// The frame draws no bottom border, so below the hints there is exactly the
+	// blank padding row and nothing else. Both are asserted: the padding row is
+	// deliberate and footerRows budgets for it, and a warning block leaking out
+	// on an empty slice would land between the two.
+	if last := stripANSI(lines[len(lines)-1]); last != "" {
+		t.Errorf("the frame's last line is %q, want the blank padding row:\n%s", last, out)
+	}
+	if hints := stripANSI(lines[len(lines)-2]); !strings.Contains(hints, "esc close") {
+		t.Errorf("the line above the padding row is %q, want the key hints; something was drawn below them:\n%s", hints, out)
 	}
 	if got, want := len(lines), frameChrome+3; got != want {
 		t.Errorf("frame is %d lines, want %d — the title block, three hosts, and the footer:\n%s", got, want, out)
@@ -1125,7 +1137,7 @@ func boxedRows(frame string) []string {
 // leaves out, including the ones scrolled off above it — so at the bottom of a
 // long list every host it counts is behind the operator. "N more" read as "N
 // further down", which was ambiguous everywhere the window was not at the top
-// and wrong about all 18 here.
+// and wrong about every host it counted here.
 //
 // The cursor is walked to the last host rather than the fixture being trimmed,
 // because the count is not a property of the list: it is a property of where
@@ -1139,16 +1151,21 @@ func TestViewOverflowNoticeCountsHostsInBothDirections(t *testing.T) {
 		t.Fatalf("cursor = %d, want 29; the window is not at the end of the list", m.cursor)
 	}
 
-	// A 30-line pane spends 5 on chrome and 1 on the notice, leaving 24 rows for
-	// 30 hosts, so 6 are outside the window.
-	out := stripANSI(renderAt(m, 30))
-	if !strings.Contains(out, "… 6 off screen") {
-		t.Errorf("notice missing or miscounted:\n%s", out)
+	// The pane spends frameChrome on the title block and the footer and one more
+	// on the notice itself; the rest are host rows, and every host that does not
+	// get one is what the notice counts. Derived rather than written down: the
+	// number moved when the frame gained its padding rows, and a hardcoded one
+	// would have made this test fail for a reason it is not about.
+	const height = 30
+	hidden := len(m.view) - (height - frameChrome - 1)
+	out := stripANSI(renderAt(m, height))
+	if want := fmt.Sprintf("… %d off screen", hidden); !strings.Contains(out, want) {
+		t.Errorf("notice missing or miscounted, want %q:\n%s", want, out)
 	}
 	// The two assertions that make the count's meaning observable: the last host
-	// is on screen, so nothing is below the window, and the first is not, so all
-	// 18 are above it. A notice reading "18 more" would be pointing down at
-	// nothing.
+	// is on screen, so nothing is below the window, and the first is not, so
+	// every hidden host is above it. A notice reading "N more" would be pointing
+	// down at nothing.
 	if !strings.Contains(out, "host29") {
 		t.Errorf("the cursor host is not on screen, so the window did not follow it:\n%s", out)
 	}

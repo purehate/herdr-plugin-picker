@@ -217,14 +217,17 @@ func (m model) View() tea.View {
 	// WindowSizeMsg — the rule has no pane width to span and falls back to the
 	// frame's widest line. Assembling in this order is what lets it reach both
 	// edges then instead of stopping short.
-	title := frameIndent + fmt.Sprintf("%s %s", s.accent.Render("ssh"), s.text.Render(m.query+"▏"))
+	// The title is s.text rather than s.accent: the dialog's own title is plain
+	// foreground, and an accent one here read as a heading competing with the
+	// band rather than as the label on an input.
+	title := frameIndent + fmt.Sprintf("%s %s", s.text.Render("ssh"), s.text.Render(m.query+"▏"))
 
 	var body strings.Builder
 	switch {
 	case len(m.opts.Hosts) == 0:
-		body.WriteString(s.muted.Render("  no ~/.ssh/config — nothing to pick") + "\n")
+		body.WriteString(frameIndent + s.muted.Render("  no ~/.ssh/config — nothing to pick") + "\n")
 	case len(m.view) == 0:
-		body.WriteString(s.muted.Render("  no hosts match") + "\n")
+		body.WriteString(frameIndent + s.muted.Render("  no hosts match") + "\n")
 	default:
 		body.WriteString(m.renderRows(s))
 	}
@@ -233,29 +236,45 @@ func (m model) View() tea.View {
 		body.WriteString(m.renderPreview(s))
 	}
 
-	body.WriteString("\n")
-	body.WriteString(frameIndent + renderHints(s) + "\n")
-	body.WriteString(m.renderWarnings(s))
-
 	w := m.innerWidth()
 	if w == 0 {
-		w = widestLine(title + "\n" + body.String())
+		// Measure the footer in its natural, unpadded form and include it: it
+		// is usually the widest line in the frame, and a rule sized without it
+		// would stop short of the hints on the first paint. renderActions at
+		// width 0 returns exactly that form, which is also what it will draw
+		// once the measurement comes back too narrow to centre in.
+		w = widestLine(title + "\n" + body.String() + "\n" + renderNavHints(s) + "\n" + renderActions(s, 0))
 	}
 
+	body.WriteString("\n")
+	body.WriteString(renderNavHints(s) + "\n")
+	body.WriteString(renderActions(s, w) + "\n")
+	body.WriteString(m.renderWarnings(s))
+
+	// The rule is inset on both sides to the same two columns as the title, so
+	// the frame has one margin rather than a divider that outruns everything
+	// above and below it.
 	var frame strings.Builder
+	frame.WriteString("\n")
 	frame.WriteString(title + "\n")
-	frame.WriteString(rule(w, s.muted) + "\n")
+	frame.WriteString(frameIndent + rule(w-2*len(frameIndent), s.muted) + "\n")
 	frame.WriteString("\n")
 	frame.WriteString(body.String())
 
-	// Every line above is newline-terminated, which would leave the frame
-	// ending in a blank line — a real screen row, and one fixedChrome does not
-	// count. box() used to trim it as a side effect of wrapping the content;
-	// with no box the trim has to be stated.
+	// The frame closes on a blank padding row, matching the one it opens with.
+	// Inside herdr's border, content flush against the edge read as a pane with
+	// a line round it rather than as a dialog.
+	//
+	// That row *is* the empty line after a trailing newline, so the frame has to
+	// end in exactly one of those: trim whatever renderWarnings left and put one
+	// back, rather than trusting the block above to have ended on the right
+	// count. footerRows budgets for it, and so does screenRows in the tests — a
+	// trailing newline really is a row the terminal draws, which is the fact
+	// that went unbudgeted when box() stopped trimming it on View's behalf.
 	//
 	// Leave AltScreen and MouseMode at their zero values: the popup is already
 	// a modal of its own, and the picker is keyboard-only.
-	return tea.NewView(m.clampToWidth(strings.TrimSuffix(frame.String(), "\n")))
+	return tea.NewView(m.clampToWidth(strings.TrimRight(frame.String(), "\n") + "\n"))
 }
 
 // clampToWidth truncates every line of the assembled frame to the pane width.
@@ -420,7 +439,11 @@ func (m model) renderRows(s styles) string {
 		// base, dim and hit are the row's three roles: the alias, the detail
 		// column, and a rune that matched the query.
 		base, dim, hit := s.text, s.muted, s.accent
-		pointer := "  "
+		// frameIndent, then the ▸ channel: unselected rows spend it on blank
+		// and the cursor row puts the marker in it, so both land their text
+		// on the same column and the marker reads as a pointer into the list
+		// rather than as another column of it.
+		pointer := frameIndent + "  "
 		selected := i == cursor
 		if selected {
 			// Every piece of the cursor row shares one style, because the band
@@ -436,7 +459,7 @@ func (m model) renderRows(s styles) string {
 			// erase the first. Underline says it without a second color.
 			base, dim, hit = s.chip, s.chip, s.chip.Underline(true)
 			style = s.chip
-			pointer = s.chip.Render("▸ ")
+			pointer = s.chip.Render(frameIndent + "▸ ")
 		}
 		alias := highlight(h.Alias, row.AliasPos, base, hit)
 
@@ -493,7 +516,7 @@ func (m model) renderRows(s styles) string {
 		// actionable here: there is no jump-to-end, so the operator's next move
 		// is ^j/^k or a narrower query either way, and one number is one thing
 		// to read.
-		fmt.Fprintf(&b, "%s\n", s.muted.Render(fmt.Sprintf("  … %d off screen", len(m.view)-len(rows))))
+		fmt.Fprintf(&b, "%s\n", s.muted.Render(fmt.Sprintf(frameIndent+"  … %d off screen", len(m.view)-len(rows))))
 	}
 	return b.String()
 }
@@ -507,7 +530,7 @@ func (m model) renderRows(s styles) string {
 // finds the frame whether the preview is there or not. Both directions of that
 // test were wrong at once — the "separator present" assertion passed off the
 // title rule, and the "separator shed" assertion failed against it.
-const previewSeparator = "  ─────"
+const previewSeparator = frameIndent + "  ─────"
 
 // renderPreview draws the separator plus the fields previewLines budgeted, in
 // declaration order — so a short pane sheds provenance before it sheds the
@@ -529,7 +552,7 @@ func (m model) renderPreview(s styles) string {
 	var b strings.Builder
 	b.WriteString(s.muted.Render(previewSeparator) + "\n")
 	for _, l := range previewFields(m.view[m.cursor].Host)[:n-1] {
-		b.WriteString("  " + s.text.Render(l) + "\n")
+		b.WriteString(frameIndent + "  " + s.text.Render(l) + "\n")
 	}
 	return b.String()
 }

@@ -19,6 +19,7 @@ func boxedModel() model {
 // cursor row and the footer's chip — and underline is how a query match stays
 // visible on top of one.
 const (
+	sgrBold      = "1"
 	sgrReverse   = "7"
 	sgrUnderline = "4"
 )
@@ -351,26 +352,219 @@ func TestThePrimaryActionIsAChip(t *testing.T) {
 	}
 }
 
-// TestTheRuleSpansTheContentWidth keeps the rule from being a stub. A separator
-// shorter than the frame reads as a piece of content rather than a division.
+// TestTheRuleSpansTheContentWidth keeps the rule from being a stub, and keeps
+// it inset. A separator shorter than the frame reads as a piece of content
+// rather than a division; one that runs the full pane while the title and the
+// hints sit two columns in reads as a line drawn across a dialog rather than as
+// the dialog's own divider.
 //
-// The rule is found by position rather than by content: it is the frame's
-// second line, directly under the title. Searching for a run of dashes would
-// find the preview separator too, and that one is deliberately short.
+// The rule is found by position rather than by content: it is ruleLine, under
+// the padding row and the title. Searching for a run of dashes would find the
+// preview separator too, and that one is deliberately short.
 func TestTheRuleSpansTheContentWidth(t *testing.T) {
 	for _, width := range []int{40, 90} {
 		lines := frameLines(renderSized(boxedModel(), width, 20))
-		if len(lines) < 2 {
+		if len(lines) <= ruleLine {
 			t.Fatalf("at width %d the frame has %d lines, too few to hold a rule", width, len(lines))
 		}
-		rule := stripANSI(lines[1])
+		rule := stripANSI(lines[ruleLine])
 		if !strings.Contains(rule, "───") {
 			t.Fatalf("at width %d the line under the title is not a rule: %q", width, rule)
 		}
-		if got, want := strings.Count(rule, "─"), width; got != want {
+		if got, want := strings.Count(rule, "─"), width-2*len(frameIndent); got != want {
 			t.Errorf("at pane width %d the rule is %d cells, want %d", width, got, want)
 		}
+		if !strings.HasPrefix(rule, frameIndent+"─") {
+			t.Errorf("at pane width %d the rule is not inset to the title's column: %q", width, rule)
+		}
 	}
+}
+
+// Where the frame's fixed lines sit, counting from the top. The frame opens on
+// a blank padding row, then the title, then the rule. By index rather than by
+// search — see TestTheRuleSpansTheContentWidth.
+const (
+	titleLine = 1
+	ruleLine  = 2
+)
+
+// footerLines picks the frame's last three lines apart: navigation hints,
+// action hints, and the blank padding row that closes the frame.
+//
+// Counted from the end rather than searched for, for the same reason ruleLine
+// is: "the line with esc close on it" finds the footer by the thing under test.
+func footerLines(t *testing.T, frame string) (nav, actions, pad string) {
+	t.Helper()
+	lines := frameLines(frame)
+	if len(lines) < 3 {
+		t.Fatalf("the frame has %d lines, too few to hold a footer:\n%s", len(lines), stripANSI(frame))
+	}
+	n := len(lines)
+	return stripANSI(lines[n-3]), stripANSI(lines[n-2]), stripANSI(lines[n-1])
+}
+
+// TestTheFrameOpensAndClosesOnAPaddingRow is the inset herdr's own dialog has
+// and the picker did not. The popup draws a border one cell off the content;
+// with the title on the first row and the hints on the last, the box read as a
+// pane with a line around it rather than as a dialog.
+//
+// Swept over heights because the top row is fixed and the bottom row is not:
+// the bottom one is whatever survives the warning block, the preview yielding,
+// and the trailing-newline normalisation, and those all move with height.
+func TestTheFrameOpensAndClosesOnAPaddingRow(t *testing.T) {
+	for _, height := range []int{minFrame, 12, 20, 30} {
+		lines := frameLines(renderSized(boxedModel(), 90, height))
+		if got := stripANSI(lines[0]); strings.TrimSpace(got) != "" {
+			t.Errorf("at height %d the frame opens on %q, want a blank padding row", height, got)
+		}
+		if got := stripANSI(lines[len(lines)-1]); strings.TrimSpace(got) != "" {
+			t.Errorf("at height %d the frame closes on %q, want a blank padding row", height, got)
+		}
+	}
+}
+
+// TestTheTitleIsNotAccented pins the title to plain foreground. An accent title
+// reads as a heading competing with the cursor band for the eye; the dialog
+// this frame copies renders its own title in the same color as its body text,
+// because the title here is the label on an input rather than a section head.
+func TestTheTitleIsNotAccented(t *testing.T) {
+	th := theme.Default()
+	accent, text := fgParams(t, th.Accent), fgParams(t, th.Text)
+	if accent == text {
+		t.Fatalf("the theme renders accent and text identically (%q), so this test cannot see the difference", accent)
+	}
+
+	title := frameLines(renderSized(newModel(Options{Hosts: manyHosts(4), Theme: th}), 90, 20))[titleLine]
+	if strings.Contains(title, accent) {
+		t.Errorf("the title is drawn in the accent color:\n%q", title)
+	}
+	if !strings.Contains(title, text) {
+		t.Errorf("the title is not drawn in the theme's text color:\n%q", title)
+	}
+	if hasSGRParam(title, sgrBold) {
+		t.Errorf("the title is bold; the dialog's own title is plain:\n%q", title)
+	}
+}
+
+// TestTheFooterSplitsNavigationFromActions covers the split itself. One line of
+// seven hints chained together reads as a string to scan rather than as a set
+// of keys to pick from, and it buries the distinction the dialog makes on
+// purpose: the keys that move around the list, then the keys that act and
+// leave. Asserted in both directions so a footer that drew everything twice, or
+// put the whole set on either line, fails.
+func TestTheFooterSplitsNavigationFromActions(t *testing.T) {
+	nav, actions, _ := footerLines(t, renderSized(boxedModel(), 90, 20))
+
+	for _, want := range []string{"↑↓ select", "^o preview"} {
+		if !strings.Contains(nav, want) {
+			t.Errorf("the navigation line is missing %q:\n%q", want, nav)
+		}
+	}
+	for _, notWant := range []string{"↵ split", "esc close"} {
+		if strings.Contains(nav, notWant) {
+			t.Errorf("the navigation line carries the action %q, so the split says nothing:\n%q", notWant, nav)
+		}
+	}
+	for _, want := range []string{"↵ split", "esc close"} {
+		if !strings.Contains(actions, want) {
+			t.Errorf("the action line is missing %q:\n%q", want, actions)
+		}
+	}
+	if strings.Contains(actions, "↑↓ select") {
+		t.Errorf("the action line carries a navigation hint:\n%q", actions)
+	}
+}
+
+// TestTheActionLineIsCentredUnderTheList covers the placement the dialog gives
+// its primary action: centred under the list rather than left-aligned with
+// everything else, which is what makes it read as the footer's one row of
+// buttons instead of a third column of hints.
+//
+// Both directions, because the fallback is the interesting one. Centring in a
+// pane too narrow to hold the line would compute a negative pad; the line goes
+// to the frame's own indent there, not to column zero and not off the left
+// edge.
+func TestTheActionLineIsCentredUnderTheList(t *testing.T) {
+	const wide = 90
+	_, actions, _ := footerLines(t, renderSized(boxedModel(), wide, 20))
+	lead, body := indentOf(actions), lipgloss.Width(strings.TrimLeft(actions, " "))
+	if want := (wide - body) / 2; lead != want {
+		t.Errorf("the action line starts at column %d in a %d-column pane, want %d:\n%q", lead, wide, want, actions)
+	}
+	// The control: at this width centring has to actually move the line. Without
+	// it the assertion above is satisfied by a frame indent that happens to land
+	// on the centre of some pane nobody is rendering into.
+	if lead <= len(frameIndent) {
+		t.Errorf("the action line is still at the frame indent in a %d-column pane, so nothing was centred:\n%q", wide, actions)
+	}
+
+	_, narrow, _ := footerLines(t, renderSized(boxedModel(), 40, 20))
+	if got := indentOf(narrow); got != len(frameIndent) {
+		t.Errorf("in a pane too narrow to centre in, the action line starts at column %d, want the frame indent (%d):\n%q", got, len(frameIndent), narrow)
+	}
+}
+
+// TestTheCursorMarkerSitsInTheRowGutter is the alignment the ▸ channel exists
+// for. The cursor row and an unselected row build their left edge in different
+// branches — one spends the gutter on the marker, the other on blanks — so
+// nothing but an assertion keeps the two from drifting apart, and a list whose
+// text shifts a column as the cursor passes over it is the most visible defect
+// the frame can have.
+func TestTheCursorMarkerSitsInTheRowGutter(t *testing.T) {
+	frame := renderSized(boxedModel(), 90, 20)
+
+	var cursor, plain string
+	for _, l := range frameLines(frame) {
+		p := stripANSI(l)
+		switch {
+		case strings.Contains(p, "host00"):
+			cursor = p
+		case strings.Contains(p, "host01"):
+			plain = p
+		}
+	}
+	if cursor == "" || plain == "" {
+		t.Fatalf("could not find both a cursor row and a plain row:\n%s", stripANSI(frame))
+	}
+	if !strings.HasPrefix(cursor, frameIndent+"▸ ") {
+		t.Errorf("the cursor marker is not in the gutter at the frame indent:\n%q", cursor)
+	}
+	if got, want := columnOf(cursor, "host00"), columnOf(plain, "host01"); got != want {
+		t.Errorf("the cursor row starts its alias at column %d and a plain row at %d, so the list shifts as the cursor moves:\n%q\n%q", got, want, cursor, plain)
+	}
+}
+
+// columnOf is the display column sub starts at in line, or -1.
+//
+// Display columns rather than strings.Index's byte offset, which is what this
+// first compared: the ▸ on the cursor row is one column wide and three bytes
+// wide, so the byte offsets differ by two on rows that line up perfectly on
+// screen, and the assertion reported a drift that was not there.
+func columnOf(line, sub string) int {
+	i := strings.Index(line, sub)
+	if i < 0 {
+		return -1
+	}
+	return lipgloss.Width(line[:i])
+}
+
+// indentOf is how many leading blank columns a stripped line has.
+func indentOf(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
+
+// fgParams is the SGR parameter run a bare foreground of c renders to, e.g.
+// "38;2;137;180;250".
+//
+// Comparing against this rather than against a whole escape sequence, because
+// lipgloss merges a style's attributes into one: the accent's own sequence
+// carries its bold alongside the color, so a line painted accent-but-not-bold
+// contains the color run and not the sequence.
+func fgParams(t *testing.T, c string) string {
+	t.Helper()
+	seq := sgrSeq.FindString(lipgloss.NewStyle().Foreground(lipgloss.Color(c)).Render("x"))
+	if seq == "" {
+		t.Skip("lipgloss emitted no color here; the title's color is unobservable")
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(seq, "\x1b["), "m")
 }
 
 // TestFixedChromeCountsWhatTheFrameDraws is the reserve-against-draw pairing
@@ -439,10 +633,14 @@ func TestAnUnsizedFrameStillRulesToItsWidestLine(t *testing.T) {
 	}).View().Content
 
 	lines := frameLines(frame)
-	if len(lines) < 2 {
+	if len(lines) <= ruleLine {
 		t.Fatalf("the unsized frame has %d lines, too few to hold a rule", len(lines))
 	}
-	if got, want := strings.Count(stripANSI(lines[1]), "─"), widestLine(frame); got != want {
-		t.Errorf("the unsized rule is %d cells and the widest line is %d:\n%s", got, want, stripANSI(frame))
+	// Inset on both sides, the same as at a known width: the fallback stands in
+	// for the pane width, so everything downstream of it has to behave
+	// identically or the first frame is laid out differently from the second.
+	want := widestLine(frame) - 2*len(frameIndent)
+	if got := strings.Count(stripANSI(lines[ruleLine]), "─"); got != want {
+		t.Errorf("the unsized rule is %d cells and the widest line inset is %d:\n%s", got, want, stripANSI(frame))
 	}
 }

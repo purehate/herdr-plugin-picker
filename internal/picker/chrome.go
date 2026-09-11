@@ -32,16 +32,28 @@ import (
 // the way the settings dialog's selected row does.
 
 const (
-	// headerRows is the title line, the rule under it, and the blank line that
-	// separates the rule from the first host row.
-	headerRows = 3
-	// footerRows is the blank line above the key hints plus the hints.
-	footerRows = 2
-	// frameIndent is the column the title and the key hints start at, so they
-	// clear herdr's popup border instead of sitting against it. Host rows,
-	// the preview and the overflow notice already carry two columns of their
-	// own and are not indented again — the pointer gutter is that indent.
-	frameIndent = " "
+	// headerRows is the blank padding row, the title, the rule under it, and
+	// the blank line that separates the rule from the first host row.
+	headerRows = 4
+	// footerRows is the blank line above the hints, the two hint lines, and
+	// the blank padding row under them.
+	//
+	// Two hint lines rather than one because the dialog this frame copies has
+	// two: the keys that move around the list, and then the keys that act,
+	// centred under them with the primary action as a chip. One line of seven
+	// hints separated by interpuncts was denser than anything herdr draws.
+	footerRows = 4
+	// frameIndent is the column the title, the rule and the hints start at.
+	//
+	// Two columns, matching the settings dialog's inset. Host rows and the
+	// preview carry their own gutter on top of this, so a row's text lands two
+	// columns further in again and the ▸ marker sits in the channel between —
+	// which is where the dialog puts its own.
+	//
+	// Not applied to the band: the dialog's selected row runs the full inner
+	// width, past the inset on both sides, and that contrast is what makes it
+	// read as a band rather than as a highlighted word.
+	frameIndent = "  "
 )
 
 // styles is the palette one frame renders with, resolved from the theme once
@@ -124,20 +136,43 @@ func bar(row string, w int, style lipgloss.Style) string {
 	return row + style.Render(strings.Repeat(" ", pad))
 }
 
-// hintText is the footer's key list, minus the primary action that leads it.
-// Unchanged from what shipped: the chip is a change of emphasis, not of
-// content, and every key here is still the only discoverability the picker has.
-const hintText = "  ^t tab · ^z zoom · ^n new · ^o preview · ^u clear · esc close"
-
-// renderHints draws the footer, with enter as an inverted chip.
+// navHints are the keys that move around inside the picker, and actionKeys the
+// keys that do something and leave. The dialog splits its footer on exactly
+// that line — "↑↓ select   tab section" over "↵ apply   esc close" — and the
+// split is worth copying for its own sake: it says which keys are safe to
+// press while you are still looking.
 //
-// Eight equally dim hints say every key matters the same amount, and enter is
-// the key the picker exists for — it was indistinguishable from "^u clear".
-// "↵ split" rather than "enter split" for the same reason herdr's dialog says
-// "↵ apply": the glyph is the key, and it buys back the columns the chip's
-// padding spends, so the line truncates no sooner than before on a narrow pane.
-func renderHints(s styles) string {
-	return s.chip.Render(" ↵ split ") + s.muted.Render(hintText)
+// Separated by two spaces rather than interpuncts, again matching the dialog.
+// Seven hints chained with "·" read as one long string to scan rather than as
+// a set of keys to pick from.
+const (
+	navHints   = "↑↓ select   ^o preview   ^u clear"
+	actionKeys = "^t tab   ^z zoom   ^n new"
+)
+
+// renderNavHints is the footer's first line: the keys that move.
+func renderNavHints(s styles) string {
+	return frameIndent + s.muted.Render(navHints)
+}
+
+// renderActions is the footer's second line: the keys that act, with enter as
+// an inverted chip, centred under the list.
+//
+// Equally dim hints say every key matters the same amount, and enter is the key
+// the picker exists for — it was indistinguishable from "^u clear". "↵ split"
+// rather than "enter split" for the same reason the dialog says "↵ apply": the
+// glyph is the key, and it buys back the columns the chip's padding spends.
+//
+// Centring falls back to the plain indent at width 0, which is the frame's
+// first paint before any WindowSizeMsg. Centring against a width nobody
+// reported would put the line in a place the next frame moves it out of.
+func renderActions(s styles, w int) string {
+	line := s.muted.Render(actionKeys) + "   " + s.chip.Render(" ↵ split ") + s.muted.Render("   esc close")
+	pad := (w - lipgloss.Width(line)) / 2
+	if pad < len(frameIndent) {
+		return frameIndent + line
+	}
+	return strings.Repeat(" ", pad) + line
 }
 
 // widestLine measures the longest line in s, in display cells.
