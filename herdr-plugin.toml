@@ -1,6 +1,24 @@
 id = "purehate.herdr-ssh"
 name = "SSH Picker"
 version = "0.1.0"
+
+# 0.9.0 is the only version this has been built and run against, and the field
+# is pure gatekeeping — herdr refuses to link or install when the minimum is
+# newer than the binary, so setting it low does not make an older herdr work,
+# it just replaces a clear refusal with a confusing failure. The archaeology,
+# for whoever considers lowering it:
+#
+#   0.7.4  session-modal popup panes, for `type = "popup"` keybindings AND
+#          plugin panes, with cell or percentage sizing (#1125). This is the
+#          feature the picker is built on.
+#   0.8.0  relative plugin commands resolve from the plugin root (#1949).
+#          Every command below is relative, so this one is load-bearing.
+#   0.9.0  unix plugin panes keep PWD aligned with the requested working
+#          directory (#2984, #3024).
+#
+# So the real floor is somewhere around 0.8.0, and dropping to it would be an
+# untested compatibility claim. Lower it when someone has actually run the
+# picker on that version, not before.
 min_herdr_version = "0.9.0"
 description = "Fuzzy-pick a host from ~/.ssh/config and SSH into a new pane, tab, or zoomed pane."
 platforms = ["macos", "linux"]
