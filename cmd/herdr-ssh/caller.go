@@ -1,20 +1,19 @@
 package main
 
-import (
-	"encoding/json"
-	"errors"
-	"os"
-	"path/filepath"
+import "os"
+
+const (
+	callerPaneEnv      = "HERDR_SSH_CALLER_PANE_ID"
+	callerTabEnv       = "HERDR_SSH_CALLER_TAB_ID"
+	callerWorkspaceEnv = "HERDR_SSH_CALLER_WORKSPACE_ID"
 )
 
-const callerFile = "caller.json"
-
-// caller is the pane the operator triggered the picker from. The overlay needs
+// caller is the pane the operator triggered the picker from. The popup needs
 // it to know where to place a split.
 type caller struct {
-	PaneID      string `json:"pane_id"`
-	TabID       string `json:"tab_id"`
-	WorkspaceID string `json:"workspace_id"`
+	PaneID      string
+	TabID       string
+	WorkspaceID string
 }
 
 // currentCaller reads the herdr context this process was launched with.
@@ -26,34 +25,31 @@ func currentCaller() caller {
 	}
 }
 
-func writeCaller(stateDir string, c caller) error {
-	if stateDir == "" {
-		return errors.New("HERDR_PLUGIN_STATE_DIR is not set")
+// callerEnv carries the action's pane context into the picker process that it
+// opens. Keeping the context on that one invocation avoids a shared state file:
+// two actions can race, but neither can overwrite the caller belonging to the
+// other picker.
+func callerEnv(c caller) map[string]string {
+	env := map[string]string{}
+	if c.PaneID != "" {
+		env[callerPaneEnv] = c.PaneID
 	}
-	raw, err := json.Marshal(c)
-	if err != nil {
-		return err
+	if c.TabID != "" {
+		env[callerTabEnv] = c.TabID
 	}
-	return os.WriteFile(filepath.Join(stateDir, callerFile), raw, 0o600)
+	if c.WorkspaceID != "" {
+		env[callerWorkspaceEnv] = c.WorkspaceID
+	}
+	return env
 }
 
-// readCaller returns the zero value when the file is missing or unusable. A
-// missing caller costs two things, neither of them the picker: the recorded
-// placement, and the already-current focus skip on the reuse path — FocusPane
-// compares the target's workspace and tab against "", which matches nothing, so
-// both focus steps fire. Firing them is the only correct fallback with no
-// caller recorded; it is a flicker, not a wrong result.
-func readCaller(stateDir string) caller {
-	if stateDir == "" {
-		return caller{}
+// pickerCaller reads the invocation-scoped context forwarded by openPicker.
+// A direct popup command bypasses openPicker and therefore returns the zero
+// value; resolveCaller fills that from HERDR_ACTIVE_* instead.
+func pickerCaller() caller {
+	return caller{
+		PaneID:      os.Getenv(callerPaneEnv),
+		TabID:       os.Getenv(callerTabEnv),
+		WorkspaceID: os.Getenv(callerWorkspaceEnv),
 	}
-	raw, err := os.ReadFile(filepath.Join(stateDir, callerFile))
-	if err != nil {
-		return caller{}
-	}
-	var c caller
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return caller{}
-	}
-	return c
 }

@@ -114,7 +114,7 @@ func frameLines(s string) []string {
 // always long enough to be truncated.
 //
 // What this fixture holds constant, and why: every field except Alias and
-// HostName is identical, and User/IdentityFile/ProxyJump/SourceFile are all
+// HostName is identical, and User/IdentityFile/proxy/source fields are all
 // unset. That pins the preview at its two-field minimum — a separator and two
 // lines, so the chrome is frameChrome plus three and the arithmetic in these
 // assertions stays checkable by hand. Stated as an offset from frameChrome
@@ -209,6 +209,20 @@ func TestViewMarksProxyJumpHostsSkipped(t *testing.T) {
 	}
 	if !strings.Contains(out, "via bastion") {
 		t.Errorf("view should show the jump host instead of a direct address:\n%s", out)
+	}
+}
+
+func TestViewMarksProxyCommandHostsSkipped(t *testing.T) {
+	m := newModel(Options{
+		Hosts: []sshconfig.Host{{
+			Alias: "command-proxy", HostName: "10.9.9.8", Port: "22",
+			ProxyCommand: "ssh gateway -W %h:%p",
+		}},
+		Theme: theme.Default(),
+	})
+	out := render(m)
+	if !strings.Contains(out, skipMarker) || !strings.Contains(out, "via ProxyCommand") {
+		t.Errorf("ProxyCommand host should render as deliberately unprobed:\n%s", out)
 	}
 }
 
@@ -318,7 +332,8 @@ func TestPreviewLabelsPadToACommonWidth(t *testing.T) {
 	lines := previewFields(sshconfig.Host{
 		Alias: "all", HostName: "10.0.0.1", Port: "2222", User: "root",
 		IdentityFile: "/keys/id_ed25519", ProxyJump: "bastion",
-		SourceFile: "/cfg/config", SourceLine: 41,
+		ProxyCommand: "ssh gateway -W %h:%p",
+		SourceFile:   "/cfg/config", SourceLine: 41,
 	})
 	want := []struct{ label, value string }{
 		{"HostName", "10.0.0.1"},
@@ -326,6 +341,7 @@ func TestPreviewLabelsPadToACommonWidth(t *testing.T) {
 		{"User", "root"},
 		{"IdentityFile", "/keys/id_ed25519"},
 		{"ProxyJump", "bastion"},
+		{"ProxyCommand", "ssh gateway -W %h:%p"},
 		{"source", "/cfg/config:41"},
 	}
 	if len(lines) != len(want) {

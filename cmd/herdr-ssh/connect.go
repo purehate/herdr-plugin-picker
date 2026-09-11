@@ -38,11 +38,11 @@ func performSelection(out io.Writer, api herdrapi.Client, cfg pluginconfig.Confi
 	// that has to change when a placement is added.
 	//
 	// Where the id is used, resolving it is a precondition of the open and not
-	// a part of the reuse scan. Nothing clears caller.json when the pane it
-	// names goes away, and the two paths that skip the scan — reuse_panes =
-	// false, and the force-new key — are no less exposed to that than the one
-	// that does. ForceNew is the sharper case: the more explicitly the operator
-	// asks for a fresh pane, the more certainly they would get a dead target.
+	// a part of the reuse scan. The caller can close while the picker is open,
+	// and the two paths that skip the scan — reuse_panes = false, and the
+	// force-new key — are no less exposed to that than the one that does.
+	// ForceNew is the sharper case: the more explicitly the operator asks for a
+	// fresh pane, the more certainly they would get a dead target.
 	//
 	// The scan has already paid for a list when it ran, so reuse costs nothing
 	// extra; the other paths pay for one only when there is an id worth checking.

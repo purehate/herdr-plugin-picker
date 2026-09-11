@@ -139,6 +139,29 @@ func TestParseKeepsALiteralIdentityFileWhenHomeIsUnresolvable(t *testing.T) {
 	}
 }
 
+func TestParseResolvesProxyCommandAndNormalizesDisabledProxies(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	write(t, root,
+		"Host command-proxy\n  ProxyCommand ssh gateway -W %h:%p\n"+
+			"Host direct\n  ProxyCommand NONE\n  ProxyJump none\n")
+
+	hosts, warns, err := parse(root, dir)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("warnings = %v, want none", warns)
+	}
+	if got := hostByAlias(t, hosts, "command-proxy").ProxyCommand; got != "ssh gateway -W %h:%p" {
+		t.Errorf("ProxyCommand = %q, want the configured command", got)
+	}
+	direct := hostByAlias(t, hosts, "direct")
+	if direct.ProxyCommand != "" || direct.ProxyJump != "" {
+		t.Errorf("direct proxies = (%q, %q), want both disabled by none", direct.ProxyCommand, direct.ProxyJump)
+	}
+}
+
 func TestParseMissingFile(t *testing.T) {
 	_, _, err := Parse(filepath.Join("testdata", "does-not-exist"))
 	if !errors.Is(err, ErrNoConfig) {

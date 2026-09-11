@@ -16,7 +16,7 @@ const (
 	openMarker  = "▪" // a session pane exists (accent)
 	upMarker    = "●" // TCP answered (green)
 	downMarker  = "○" // no answer
-	skipMarker  = "~" // ProxyJump, deliberately not probed
+	skipMarker  = "~" // proxied, deliberately not probed
 	blankMarker = " " // not probed yet
 	// fallbackRows is how many host rows to draw before a WindowSizeMsg has
 	// reported a height. Only then — see visibleRows, which otherwise fills
@@ -85,6 +85,9 @@ func previewFields(h sshconfig.Host) []string {
 	}
 	if h.ProxyJump != "" {
 		fields = append(fields, field{"ProxyJump", h.ProxyJump})
+	}
+	if h.ProxyCommand != "" {
+		fields = append(fields, field{"ProxyCommand", h.ProxyCommand})
 	}
 	if h.SourceFile != "" {
 		// Provenance matters as soon as Include is in play: "which file did this
@@ -423,7 +426,7 @@ func (m model) renderRows(s styles) string {
 		marker := blankMarker
 		style := s.muted
 		switch {
-		case h.ProxyJump != "":
+		case h.ProxyJump != "" || h.ProxyCommand != "":
 			marker = skipMarker
 		case m.probed[h.Alias] && m.up[h.Alias]:
 			marker, style = upMarker, s.up
@@ -481,6 +484,10 @@ func (m model) renderRows(s styles) string {
 			// A jump host replaces the address outright: the address is not what
 			// the connection actually reaches.
 			detail = dim.Render("via " + h.ProxyJump)
+		} else if h.ProxyCommand != "" {
+			// ProxyCommand can be an arbitrarily long shell command; the preview
+			// shows it in full, while the row needs only the routing fact.
+			detail = dim.Render("via ProxyCommand")
 		}
 		// The gaps between the columns are rendered rather than written as bare
 		// spaces, because on the banded row a bare space is a hole. Reverse

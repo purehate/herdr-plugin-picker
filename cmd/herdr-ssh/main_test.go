@@ -69,7 +69,7 @@ func TestRunRejectsUnknownVerbs(t *testing.T) {
 	}
 }
 
-func TestOpenPickerWritesCallerAndOpensThePopup(t *testing.T) {
+func TestOpenPickerForwardsCallerAndOpensThePopup(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
 	t.Setenv("HERDR_PANE_ID", "w5:pA")
@@ -86,10 +86,16 @@ func TestOpenPickerWritesCallerAndOpensThePopup(t *testing.T) {
 		t.Fatalf("openPicker: %v", err)
 	}
 
-	if got := readCaller(dir); got.PaneID != "w5:pA" || got.WorkspaceID != "w5" {
-		t.Errorf("caller.json = %+v", got)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read state dir: %v", err)
 	}
-	want := "plugin pane open --plugin purehate.herdr-ssh --entrypoint picker --placement popup --focus"
+	if len(entries) != 0 {
+		t.Fatalf("openPicker wrote shared state files: %v", entries)
+	}
+	want := "plugin pane open --plugin purehate.herdr-ssh --entrypoint picker --placement popup " +
+		"--env HERDR_SSH_CALLER_PANE_ID=w5:pA --env HERDR_SSH_CALLER_TAB_ID=w5:t1 " +
+		"--env HERDR_SSH_CALLER_WORKSPACE_ID=w5 --focus"
 	if len(calls) != 1 || strings.Join(calls[0], " ") != want {
 		t.Fatalf("argv = %v, want %q", joined(calls), want)
 	}
@@ -136,7 +142,6 @@ func TestTheManifestAndOpenPickerAgreeOnPlacement(t *testing.T) {
 		calls = append(calls, args)
 		return []byte(`{"id":1,"result":{}}`), nil
 	}}
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 	if err := openPicker(api); err != nil {
 		t.Fatalf("openPicker: %v", err)
 	}
@@ -147,11 +152,44 @@ func TestTheManifestAndOpenPickerAgreeOnPlacement(t *testing.T) {
 	}
 }
 
-func TestOpenPickerFailsWithoutAStateDir(t *testing.T) {
+func TestOpenPickerDoesNotNeedAStateDir(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
-	api := herdrapi.Client{Run: func([]string) ([]byte, error) { return nil, nil }}
-	if err := openPicker(api); err == nil {
-		t.Fatal("err = nil, want an error when the state dir is unset")
+	var calls int
+	api := herdrapi.Client{Run: func([]string) ([]byte, error) {
+		calls++
+		return nil, nil
+	}}
+	if err := openPicker(api); err != nil {
+		t.Fatalf("openPicker without a state dir: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("herdr calls = %d, want one pane open", calls)
+	}
+}
+
+func TestRunPickerUsesTheForwardedCallerInsteadOfPopupContext(t *testing.T) {
+	pickerEnv(t, t.TempDir())
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", pluginConfigDir(t, "probe = false\nreuse_panes = false\n"))
+	t.Setenv(callerPaneEnv, "w5:pA")
+	t.Setenv(callerTabEnv, "w5:t1")
+	t.Setenv(callerWorkspaceEnv, "w5")
+	// These can describe the popup itself. They must not override the context
+	// that the action captured before it opened this process.
+	t.Setenv("HERDR_ACTIVE_PANE_ID", "w9:pPopup")
+	t.Setenv("HERDR_ACTIVE_TAB_ID", "w9:t9")
+	t.Setenv("HERDR_ACTIVE_WORKSPACE_ID", "w9")
+
+	pick, _ := stubPicker(picker.Selection{Host: devHost, Placement: "split"}, true, nil)
+	api, calls := fakeAPI(openPanesJSON)
+	if err := runPickerWith(io.Discard, strings.NewReader(""), pick, api); err != nil {
+		t.Fatalf("runPickerWith: %v", err)
+	}
+	argv := openArgv(t, *calls)
+	if !strings.Contains(argv, "--target-pane w5:pA") {
+		t.Fatalf("argv = %q, want the invocation-scoped caller pane", argv)
+	}
+	if strings.Contains(argv, "w9:pPopup") {
+		t.Fatalf("argv = %q, popup context overrode the forwarded caller", argv)
 	}
 }
 
@@ -213,7 +251,6 @@ func pickerEnv(t *testing.T, home string) {
 	t.Setenv("HOME", home)
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", "")
 	t.Setenv("HERDR_CONFIG_PATH", "")
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
 	t.Setenv("HERDR_PANE_ID", "")
 }
 
@@ -801,7 +838,6 @@ func TestMainDispatchesThroughRunAndSetsTheExitCode(t *testing.T) {
 			verb: "plugin open-picker",
 			env: []string{
 				"HERDR_BIN_PATH=" + fakeHerdr(t),
-				"HERDR_PLUGIN_STATE_DIR=" + t.TempDir(),
 				"HERDR_PANE_ID=w5:pA",
 				"HERDR_TAB_ID=w5:t1",
 				"HERDR_WORKSPACE_ID=w5",
@@ -847,7 +883,6 @@ func TestRunPickerWiresTheRealTerminalPickerAndClient(t *testing.T) {
 		"HERDR_BIN_PATH="+filepath.Join(t.TempDir(), "herdr-does-not-exist"),
 		"HERDR_PLUGIN_CONFIG_DIR=",
 		"HERDR_CONFIG_PATH=",
-		"HERDR_PLUGIN_STATE_DIR=",
 		"HERDR_PANE_ID=",
 	)
 
@@ -997,7 +1032,6 @@ func TestConnectWarnsEvenWhenTheAliasStillResolves(t *testing.T) {
 		"HERDR_PANE_ID=w5:pA",
 		"HERDR_TAB_ID=w5:t1",
 		"HERDR_WORKSPACE_ID=w5",
-		"HERDR_PLUGIN_STATE_DIR="+t.TempDir(),
 	)
 
 	if code != 0 {

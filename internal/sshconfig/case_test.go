@@ -8,7 +8,7 @@ import (
 
 // ssh_config(5) keywords are case-insensitive. Every fixture elsewhere in
 // this package spells every keyword in canonical CamelCase (Host, HostName,
-// User, Port, IdentityFile, ProxyJump, Include, Match) — confirmed by
+// User, Port, IdentityFile, ProxyJump, ProxyCommand, Include, Match) — confirmed by
 // inspection of every *_test.go and testdata/* file in this directory before
 // writing these tests. That means sshconfig.go's two strings.ToLower calls
 // (the stanza-keyword switch and the value-keyword store) are exercised by
@@ -19,7 +19,7 @@ import (
 // These tests close that gap. Each fixture holds every OTHER keyword in
 // canonical case and varies only the one keyword class under test — stanza
 // keywords (Host, Match, Include) in one set of tests, value keywords
-// (HostName, User, Port, IdentityFile, ProxyJump) in another. That isolation
+// (HostName, User, Port, IdentityFile, ProxyJump, ProxyCommand) in another. That isolation
 // is deliberate: it is what makes a stanza-keyword regression fail only the
 // stanza tests below, and a value-keyword regression fail only the value
 // test, rather than one mutant tripping every test in this file
@@ -182,6 +182,22 @@ func TestParseValueKeywordsCaseInsensitive(t *testing.T) {
 			}
 			if h.ProxyJump != "bastion1" {
 				t.Errorf("ProxyJump = %q, want bastion1", h.ProxyJump)
+			}
+		})
+	}
+}
+
+func TestParseProxyCommandKeywordCaseInsensitive(t *testing.T) {
+	for name, keyword := range map[string]string{"lowercase": "proxycommand", "uppercase": "PROXYCOMMAND"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			write(t, filepath.Join(dir, "root"), "Host command-proxy\n  "+keyword+" ssh gateway -W %h:%p\n")
+			hosts, _, err := parse(filepath.Join(dir, "root"), dir)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := hostByAlias(t, hosts, "command-proxy").ProxyCommand; got != "ssh gateway -W %h:%p" {
+				t.Errorf("ProxyCommand = %q, want the differently-cased keyword resolved", got)
 			}
 		})
 	}

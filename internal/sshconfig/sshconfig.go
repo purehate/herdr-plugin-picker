@@ -22,6 +22,7 @@ type Host struct {
 	Port         string
 	IdentityFile string
 	ProxyJump    string
+	ProxyCommand string
 	SourceFile   string
 	SourceLine   int
 }
@@ -459,7 +460,15 @@ func resolveHost(alias string, blocks []block) Host {
 	} else {
 		h.IdentityFile = values["identityfile"]
 	}
-	h.ProxyJump = values["proxyjump"]
+	// `none` explicitly disables either proxy mechanism. Keeping it as a
+	// non-empty value would make the picker skip a perfectly direct host and
+	// render "via none". OpenSSH treats keyword values case-insensitively here.
+	if v := strings.TrimSpace(values["proxyjump"]); !strings.EqualFold(v, "none") {
+		h.ProxyJump = v
+	}
+	if v := strings.TrimSpace(values["proxycommand"]); !strings.EqualFold(v, "none") {
+		h.ProxyCommand = v
+	}
 	return h
 }
 

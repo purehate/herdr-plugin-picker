@@ -58,19 +58,17 @@ func resolvePluginConfigDir() string {
 	return filepath.Join(home, ".config", "herdr", "plugins", "config", pluginID)
 }
 
-// resolveCaller fills in a caller that was never recorded. In popup mode
-// openPicker does not run — the popup execs the picker verb directly — so
-// nothing writes caller.json and readCaller returns the zero value, leaving the
-// split with no target. HERDR_ACTIVE_PANE_ID names the pane the operator
-// triggered the popup from, which is the same pane openPicker would have
-// recorded, so it is the right substitute rather than a guess.
+// resolveCaller fills in context that openPicker did not forward. In direct
+// popup mode openPicker does not run — the popup execs the picker verb itself —
+// so pickerCaller returns the zero value. HERDR_ACTIVE_PANE_ID names the pane
+// the operator triggered that popup from and is the right substitute.
 //
-// Field by field, not all-or-nothing: a recorded caller always wins, because
-// inside a plugin overlay pane the HERDR_ACTIVE_* variables would name the
-// overlay itself. Filling only the empty fields also keeps a partial
-// caller.json useful — FocusPane compares the target's workspace and tab
-// against these, and an absent value costs a redundant focus while a wrong one
-// costs a jump to the wrong place.
+// Field by field, not all-or-nothing: a forwarded caller always wins, because
+// inside a plugin popup pane the HERDR_ACTIVE_* variables may name the popup
+// itself. Filling only the empty fields also keeps a partial
+// invocation-scoped context useful — FocusPane compares the target's workspace
+// and tab against these, and an absent value costs a redundant focus while a
+// wrong one costs a jump to the wrong place.
 func resolveCaller(c caller) caller {
 	if c.PaneID == "" {
 		c.PaneID = os.Getenv("HERDR_ACTIVE_PANE_ID")

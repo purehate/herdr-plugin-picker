@@ -31,9 +31,9 @@ func main() {
 // and once more after the keypress, when the pane is already going away.
 //
 // Only errors carrying errReported are suppressed. Everything else has been
-// reported nowhere yet — the usage errors, runConnect's flag errors,
-// openPicker's writeCaller failure — and this is the only place they would ever
-// be printed, so they must still come out here.
+// reported nowhere yet — the usage errors, runConnect's flag errors, and a
+// failed pane open — and this is the only place they would ever be printed, so
+// they must still come out here.
 func reportFatal(out io.Writer, err error) {
 	if errors.Is(err, errReported) {
 		return
@@ -65,10 +65,10 @@ func run(args []string) error {
 	}
 }
 
-// openPicker runs in the caller's pane: it records where the operator was, then
-// opens the picker as a floating popup.
+// openPicker runs in the caller's pane: it forwards where the operator was to
+// the new picker process, then opens it as a floating popup.
 //
-// Recording the caller first is the whole reason this verb exists rather than
+// Forwarding the caller is the whole reason this verb exists rather than
 // the action shelling straight out to `herdr plugin pane open`. The picker
 // needs to know which pane the operator triggered it from so `enter` splits
 // that pane rather than whichever one herdr happens to consider active by the
@@ -82,13 +82,11 @@ func run(args []string) error {
 // how it was invoked, which is the kind of difference nobody notices until it
 // is a bug report.
 func openPicker(api herdrapi.Client) error {
-	if err := writeCaller(os.Getenv("HERDR_PLUGIN_STATE_DIR"), currentCaller()); err != nil {
-		return err
-	}
 	return api.PluginPaneOpen(herdrapi.OpenOpts{
 		Plugin:     pluginID,
 		Entrypoint: "picker",
 		Placement:  "popup",
+		Env:        callerEnv(currentCaller()),
 		Focus:      true,
 	})
 }
@@ -103,7 +101,7 @@ func openPicker(api herdrapi.Client) error {
 // it in makes that race unrepresentable rather than merely discouraged.
 type pickerFn func(picker.Options) (picker.Selection, bool, error)
 
-// runPicker draws the overlay and acts on the operator's choice.
+// runPicker draws the popup and acts on the operator's choice.
 func runPicker() error {
 	return runPickerWith(os.Stdout, os.Stdin, picker.Run, herdrapi.New())
 }
@@ -124,9 +122,9 @@ func runPickerWith(out io.Writer, in io.Reader, pick pickerFn, api herdrapi.Clie
 
 	hosts, warnings := loadHosts(sshConfigPath(), cfg)
 	// Surface load errors in the footer rather than writing them out. This path
-	// has an overlay to render into, and the footer is where the operator is
+	// has a popup to render into, and the footer is where the operator is
 	// already looking; a plain write would survive (no alt-screen switch) but
-	// prints above the overlay instead of in it. runSession and runConnect have
+	// prints above the popup instead of in it. runSession and runConnect have
 	// no picker, so theirs go straight to their diagnostic stream. Built in a
 	// fixed order rather than prepended twice, which would silently reverse them.
 	var loadWarnings []string
@@ -204,12 +202,12 @@ func runPickerWith(out io.Writer, in io.Reader, pick pickerFn, api herdrapi.Clie
 		return nil
 	}
 
-	if err := performSelection(out, api, cfg, sel, resolveCaller(readCaller(os.Getenv("HERDR_PLUGIN_STATE_DIR")))); err != nil {
-		// Hold the overlay open with the error on screen, and only then close.
+	if err := performSelection(out, api, cfg, sel, resolveCaller(pickerCaller())); err != nil {
+		// Hold the popup open with the error on screen, and only then close.
 		// Closing first would take the only explanation with it.
 		//
 		// The footer argument above does not reach this error: picker.Run has
-		// already returned, so there is no overlay left to render into. It is a
+		// already returned, so there is no popup left to render into. It is a
 		// fatal pane exit exactly like runSession's, so it goes through the same
 		// helper and onto the same stream rather than re-inlining it on stderr.
 		// The leading newline is the one picker-specific part — bubbletea leaves

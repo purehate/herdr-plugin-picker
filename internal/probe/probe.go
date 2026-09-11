@@ -14,7 +14,7 @@ import (
 const maxInFlight = 16
 
 // Target is one host to check. Skip marks hosts that cannot be reached
-// directly, such as anything behind a ProxyJump.
+// directly, such as anything behind a ProxyJump or ProxyCommand.
 type Target struct {
 	Alias string
 	Addr  string

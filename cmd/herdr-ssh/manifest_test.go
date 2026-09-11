@@ -231,7 +231,6 @@ func TestManifestIDMatchesPluginID(t *testing.T) {
 // keeps checking the real value if the literal in main.go moves or is computed.
 func TestOpenPickerUsesAManifestPaneID(t *testing.T) {
 	m := manifestLoad(t)
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
 
 	var calls [][]string
 	if err := openPicker(manifestRecorder(&calls)); err != nil {

@@ -148,6 +148,27 @@ func TestLoadMalformedTOMLProbeIsOrderIndependent(t *testing.T) {
 	}
 }
 
+// Unknown keys are configuration errors, not comments. In particular, silently
+// accepting `proeb = false` applies the default `probe = true` and sends the
+// exact network traffic the operator tried to disable.
+func TestLoadUnknownKeyFailsClosedOnProbe(t *testing.T) {
+	cfg, err := LoadDir(writeConfig(t,
+		"probe_timeout_ms = 250\nproeb = false\nssh_args = [\"-v\"]\n"))
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+	var strictErr *toml.StrictMissingError
+	if !errors.As(err, &strictErr) {
+		t.Fatalf("err = %v, want it to retain *toml.StrictMissingError", err)
+	}
+	if cfg.Probe {
+		t.Error("Probe = true, want false — a misspelled opt-out must fail closed")
+	}
+	if cfg.ProbeTimeoutMS != 300 || cfg.SSHArgs != nil {
+		t.Errorf("cfg = %+v, want partial strict decode discarded", cfg)
+	}
+}
+
 func TestLoadUnreadableFileFailsClosedOnProbe(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses file permissions")
@@ -280,5 +301,57 @@ func TestLoadAbsentProbeTimeoutKeepsDefault(t *testing.T) {
 	}
 	if cfg.ProbeTimeoutMS != 300 {
 		t.Errorf("ProbeTimeoutMS = %d, want the 300 default", cfg.ProbeTimeoutMS)
+	}
+}
+
+func TestValidateSSHArgsAllowsOptionsThatDoNotChangeThePreview(t *testing.T) {
+	cases := [][]string{
+		nil,
+		{"-v"},
+		{"-vvv", "-A", "-C"},
+		{"-o", "ConnectTimeout=5", "-oServerAliveInterval=30"},
+		{"-L", "8080:127.0.0.1:80", "-R2222:127.0.0.1:22"},
+		{"--"},
+	}
+	for _, args := range cases {
+		if err := validateSSHArgs(args); err != nil {
+			t.Errorf("validateSSHArgs(%q) = %v, want nil", args, err)
+		}
+	}
+}
+
+func TestValidateSSHArgsRejectsOptionsThatCanChangeThePreview(t *testing.T) {
+	cases := [][]string{
+		{"-F", "/tmp/other-config"},
+		{"-F/tmp/other-config"},
+		{"-p2222"},
+		{"-J", "bastion"},
+		{"-o", "HostName=elsewhere.invalid"},
+		{"-oProxyCommand=nc somewhere 22"},
+		{"-o", "CanonicalizeHostname=yes"},
+		{"other-host"},
+		{"--", "other-host"},
+	}
+	for _, args := range cases {
+		if err := validateSSHArgs(args); err == nil {
+			t.Errorf("validateSSHArgs(%q) = nil, want rejection", args)
+		}
+	}
+}
+
+func TestLoadRejectsOnlyUnsafeSSHArgsKey(t *testing.T) {
+	cfg, err := LoadDir(writeConfig(t,
+		"probe = false\nhidden = [\"old-*\"]\nssh_args = [\"-F\", \"/tmp/other-config\"]\n"))
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "ssh_args") {
+		t.Fatalf("err = %v, want ErrInvalid naming ssh_args", err)
+	}
+	if cfg.Probe {
+		t.Error("valid probe = false was discarded with the rejected ssh_args")
+	}
+	if !reflect.DeepEqual(cfg.Hidden, []string{"old-*"}) {
+		t.Errorf("Hidden = %v, want valid hidden key preserved", cfg.Hidden)
+	}
+	if cfg.SSHArgs != nil {
+		t.Errorf("SSHArgs = %v, want unsafe arguments reset", cfg.SSHArgs)
 	}
 }

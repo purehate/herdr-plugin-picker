@@ -4,11 +4,21 @@
 
 **Goal:** Build `purehate.herdr-ssh`, a Herdr plugin that opens a floating fuzzy picker over `~/.ssh/config` hosts and SSHes into a new pane, tab, or zoomed pane on selection.
 
-**Architecture:** One Go binary with four verbs (`plugin open-picker`, `picker`, `session`, `connect`) declared in `herdr-plugin.toml` as an action plus two pane entrypoints. The picker runs in an `overlay` pane; selecting a host opens the `session` entrypoint with the host passed via `--env`, and that process renames its own pane to `ssh:<alias>` before `exec`ing ssh. Every `herdr` CLI call goes through one injectable `Runner` seam so the whole flow is testable without a running Herdr.
+**Architecture:** One Go binary with four verbs (`plugin open-picker`, `picker`, `session`, `connect`) declared in `herdr-plugin.toml` as an action plus two pane entrypoints. The picker runs in a `popup` pane; selecting a host opens the `session` entrypoint with the host passed via `--env`, and that process renames its own pane to `ssh:<alias>` before `exec`ing ssh. Every `herdr` CLI call goes through one injectable `Runner` seam so the whole flow is testable without a running Herdr.
 
 **Tech Stack:** Go 1.27, `charm.land/bubbletea/v2 v2.0.9`, `charm.land/lipgloss/v2 v2.0.6`, `github.com/pelletier/go-toml/v2 v2.4.3`. Spec: `docs/specs/2026-09-09-ssh-picker-design.md`.
 
 ---
+
+## Post-review hardening
+
+This file records the implementation as it evolved, so older task snippets
+below intentionally preserve superseded code. The current source and design
+spec include four later hardening changes: plugin config decoding rejects
+unknown keys and fails probing closed; caller context is forwarded to each
+picker through `HERDR_SSH_CALLER_*` rather than shared `caller.json` state;
+both `ProxyJump` and `ProxyCommand` suppress direct probes; and `ssh_args`
+rejects options that can make the connection disagree with the preview.
 
 ## Standing Rules for Every Task
 

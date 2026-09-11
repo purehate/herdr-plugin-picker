@@ -20,7 +20,7 @@ import (
 // resolves against the process working directory, and ssh never reads
 // $CWD/.ssh/config, so the picker would enumerate hosts from a file
 // `ssh <alias>` provably ignores and describe every row with a HostName, Port,
-// User and ProxyJump the connection would not use — and in a directory the
+// User and proxy route the connection would not use — and in a directory the
 // operator did not author, a planted .ssh/config would become the host list.
 // That is the extra_config_paths defect (5a31f54) reached by another route; the
 // ruling there was that the rows the picker shows must be the set ssh can
@@ -46,7 +46,7 @@ func sshConfigPath() string {
 // picker's rows have to be the set ssh can reach. Selecting a host execs
 // `ssh <alias>` with no -F, so ssh resolves the alias against this file and its
 // Includes alone — a row sourced anywhere else would be described here with a
-// HostName, Port, User and ProxyJump that ssh never sees, and the connection
+// HostName, Port, User and proxy route that ssh never sees, and the connection
 // would go somewhere other than the preview said. On an engagement that is
 // traffic from an unauthorized source, straight past the pivot the operator
 // picked.
@@ -95,7 +95,7 @@ func loadHosts(primary string, cfg pluginconfig.Config) ([]sshconfig.Host, []str
 // same underlying reason: dialing them would produce a confident answer about an
 // address the connection is not going to use.
 //
-//   - Behind a ProxyJump. A direct dial tests the wrong network.
+//   - Behind a ProxyJump or ProxyCommand. A direct dial tests the wrong network.
 //   - HostName still carrying a `%` token. ssh expands %h, %p, %r and the rest
 //     at connect time; this picker does not, so the literal token is what would
 //     be dialed. `%` cannot appear in a hostname (RFC 1123), and ssh's own
@@ -112,7 +112,7 @@ func targetsFor(hosts []sshconfig.Host) []probe.Target {
 		out = append(out, probe.Target{
 			Alias: h.Alias,
 			Addr:  net.JoinHostPort(h.HostName, h.Port),
-			Skip:  h.ProxyJump != "" || strings.Contains(h.HostName, "%"),
+			Skip:  h.ProxyJump != "" || h.ProxyCommand != "" || strings.Contains(h.HostName, "%"),
 		})
 	}
 	return out

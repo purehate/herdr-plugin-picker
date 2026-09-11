@@ -29,7 +29,7 @@ config built from names RFC 2606 and RFC 5737 reserve for documentation, so
 nothing in it can be a host anyone owns. `staging` comes from an `Include`, and
 its `source` line is how you tell an include chain resolved from an alias that
 merely exists somewhere. `●` means the port answered, `○` means it did not, and
-`~` means the host is behind a `ProxyJump` and was deliberately left alone.
+`~` means the host is proxied and was deliberately left alone.
 
 ## Install
 
@@ -92,22 +92,24 @@ show you. It never writes to them.
 a line in your config; the file it points at is not read. No key, passphrase or
 credential is read, stored or sent anywhere.
 
-**Writes exactly one file:** the id of the pane you pressed the key in, under
-`$HERDR_PLUGIN_STATE_DIR`. That is what lets `enter` split the pane you were
-working in rather than whichever one herdr considers active by the time you
-choose a host.
+**Writes no files.** The action forwards the caller's pane, tab, and workspace
+ids directly to the picker process. That is what lets `enter` split the pane you
+were working in without storing shared state that another picker could
+overwrite.
 
 **Makes one TCP connection per host, if you let it.** That is the `●`/`○`
 marker: a connect to `HostName`:`Port`, 300 ms by default, no bytes sent and
 none read. It is a port scan of your own inventory and worth deciding about
 rather than inheriting — `probe = false` turns it off. Hosts behind a
-`ProxyJump` are skipped either way, since dialing them direct would test the
-wrong network and report a confident false "down". An unreadable or invalid
-plugin config turns probing **off** rather than falling back to on.
+`ProxyJump` or `ProxyCommand` are skipped either way, since dialing them direct
+would test the wrong network and report a confident false "down". An unreadable
+config, malformed TOML, or an unknown or misspelled key turns probing **off**
+rather than falling back to on. Invalid values of recognized keys are reported
+and reset individually, preserving an explicit `probe` setting.
 
 **Does not implement SSH.** Picking a host `exec`s your own `ssh` with the
 alias, in a pane herdr opens for it. Your config, your keys, your agent, your
-`known_hosts`, your `ProxyJump`. If a host works by hand it works here, and
+`known_hosts`, your proxy settings. If a host works by hand it works here, and
 failures read the same too.
 
 **Talks to herdr only through `$HERDR_BIN_PATH`** — open, close, rename and
@@ -145,12 +147,13 @@ If you came from `fzf`, note that `^n` is a placement key here, not cursor-down 
 | ▪       | a session for this host is already open       |
 | ●       | port reachable                                |
 | ○       | port not reachable                            |
-| ~       | behind a `ProxyJump`, deliberately not probed |
+| ~       | proxied, deliberately not probed              |
 | (blank) | not probed yet, or never probed               |
 
-Hosts behind a `ProxyJump` are not probed — a direct dial would test the wrong
-network and report a false "down". `▪` wins over the reachability markers,
-because it is the one that changes what `enter` does. It appears only when
+Hosts behind a `ProxyJump` or `ProxyCommand` are not probed — a direct dial
+would test the wrong network and report a false "down". `▪` wins over the
+reachability markers because it is the one that changes what `enter` does. It
+appears only when
 `reuse_panes` is on: with reuse off, `enter` opens a new pane whether or not one
 is already there, so the marker would be claiming something `enter` does not do.
 
@@ -175,8 +178,14 @@ split_direction = "right"     # or "down"
 show_preview = true
 reuse_panes = true            # focus an existing ssh:<host> pane instead of opening another
 hidden = []                   # globs matched against the alias
-ssh_args = []                 # flags passed to ssh, before the destination
+ssh_args = []                 # non-routing flags passed to ssh before the destination
 ```
+
+`ssh_args` accepts ordinary client options such as `-v`, `-A`, or
+`-o ConnectTimeout=5`. Options that can change the displayed connection — for
+example `-F`, `-p`, `-J`, `-l`, `-i`, or `-o HostName=...` — are rejected with
+a visible warning. Put those settings in `~/.ssh/config`; otherwise the preview
+and probe could describe one destination while `ssh` connects to another.
 
 ## What it understands
 
@@ -198,6 +207,10 @@ token literally and is never probed — the literal string is not a dialable
 address, and `%` cannot appear in a real hostname. `ssh` still expands it on
 connect, so the connection is correct; the display is literal, and the
 reachability marker abstains rather than reporting a result it cannot get.
+
+Both `ProxyJump` and `ProxyCommand` are recognized. Their hosts are shown with
+`~` and are never dialed directly by the reachability probe. A value of `none`
+correctly disables either proxy mechanism.
 
 ## Direct connect
 

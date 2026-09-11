@@ -87,7 +87,7 @@ Single Go binary, four verbs, seven focused packages.
 ```toml
 id = "purehate.herdr-ssh"
 name = "SSH Picker"
-version = "0.1.0"
+version = "0.1.1"
 min_herdr_version = "0.9.0"
 description = "Fuzzy-pick a host from ~/.ssh/config and SSH into a new pane, tab, or zoomed pane."
 platforms = ["macos", "linux"]
@@ -104,7 +104,9 @@ command = ["./bin/herdr-ssh", "plugin", "open-picker"]
 [[panes]]
 id = "picker"
 title = "SSH Hosts"
-placement = "overlay"
+placement = "popup"
+width = 94
+height = 28
 command = ["./bin/herdr-ssh", "picker"]
 
 [[panes]]
@@ -161,6 +163,7 @@ type Host struct {
     Port         string   // resolved, defaults to "22"
     IdentityFile string
     ProxyJump    string
+    ProxyCommand string
     SourceFile   string   // which config file it came from
     SourceLine   int
 }
@@ -203,11 +206,11 @@ type Selection struct {
 prefix+i
   └─ Herdr runs action `purehate.herdr-ssh.open-picker`
        env: HERDR_PANE_ID (the focused pane), HERDR_WORKSPACE_ID, HERDR_TAB_ID
-     1. write caller context → $HERDR_PLUGIN_STATE_DIR/caller.json
+     1. forward caller context as invocation-scoped HERDR_SSH_CALLER_* env
      2. herdr plugin pane open --plugin purehate.herdr-ssh \
-          --entrypoint picker --placement overlay --focus
+          --entrypoint picker --placement popup --env ... --focus
 
-  └─ overlay pane runs `herdr-ssh picker`
+  └─ popup pane runs `herdr-ssh picker`
      3. parse SSH config · load theme · herdr pane list → mark `open`
      4. start probes in the background; render immediately
      5. user filters and picks:
@@ -221,7 +224,7 @@ prefix+i
      6b. otherwise
            → herdr plugin pane open --entrypoint session \
                --placement <split|tab|zoomed> \
-               --target-pane <caller pane from caller.json> \
+               --target-pane <caller pane from HERDR_SSH_CALLER_PANE_ID> \
                --direction <split_direction> \
                --env HERDR_SSH_TARGET=<alias> --focus
            → herdr plugin pane close $HERDR_PANE_ID
@@ -254,7 +257,7 @@ rather than in an alternate screen, so an over-tall frame scrolls the pane inste
 being clipped by it. Chrome is not entitled to the space it wants: the preview is the
 only optional element, so in a pane too short for both it yields — and where the preview
 cannot fit at all, `^o` does nothing. Losing the panel in a pane that could not display
-it is better than an overlay whose height depends on which row the cursor is on, since
+it is better than a popup whose height depends on which row the cursor is on, since
 the preview's height varies with the highlighted host's field count.
 
 Pane **width** is used, and lines wider than it are **truncated**. This is not cosmetic.
@@ -281,7 +284,7 @@ Two distinct facts get two distinct glyphs. Conflating "a pane is already connec
 ▪ nixos-dev    operator@192.0.2.10      ▪ open   pane exists (accent color)
   nixbuild     root@10.0.0.12           ● up     TCP answered (green)
   oldbox       10.0.0.99                ○        no answer
-  jumped       via bastion              ~        ProxyJump, not probed
+  jumped       via bastion              ~        proxied, not probed
   fresh        10.0.0.50                         not probed yet (blank)
 ```
 
@@ -297,8 +300,9 @@ the contract.
 Concurrent TCP dial to each resolved `HostName:Port`, 300ms default timeout, results
 streamed into the list as Bubble Tea messages. First paint never waits on the network.
 
-ProxyJump hosts are not probed: reaching them means dialing through the bastion, which is
-slow and authenticates a jump the operator did not ask for.
+ProxyJump and ProxyCommand hosts are not probed: dialing them directly tests a
+route SSH will not use and can report a reachable host as down. `none` disables
+either mechanism and therefore does not suppress probing.
 
 Each picker open sends one SYN per host — 20 for the current config. `probe = false`
 disables it outright for operators who don't want that traffic.
@@ -317,10 +321,10 @@ source        ~/.ssh/config:41
 ```
 
 The field list is illustrative and open — "resolved fields" means whichever of them the
-host actually sets, so `ProxyJump` belongs here too, and a field the host does not set is
-omitted rather than rendered empty. The two-column alignment is not illustrative: labels
-pad to a common width so the values form a single scannable edge. That is the whole
-reason the panel exists.
+host actually sets, so `ProxyJump` and `ProxyCommand` belong here too, and a
+field the host does not set is omitted rather than rendered empty. The
+two-column alignment is not illustrative: labels pad to a common width so the
+values form a single scannable edge. That is the whole reason the panel exists.
 
 `^o` toggles it. In a pane too short to fit the list and the panel together the panel
 yields — see Layout.
@@ -387,7 +391,7 @@ split_direction = "right"     # or "down"
 show_preview = true
 reuse_panes = true
 hidden = []                   # globs matched against alias, e.g. ["colima", "*-old"]
-ssh_args = []                 # flags passed to ssh, before the destination
+ssh_args = []                 # non-routing flags passed to ssh before the destination
 ```
 
 **There is deliberately no key for adding a config from outside the `Include` chain.** An
@@ -396,7 +400,7 @@ outside the Include chain", and it was implemented and then removed at `5a31f54`
 definition and the mechanism contradicted each other: selecting a host execs `ssh <alias>`
 with no `-F`, so ssh resolves that alias against `~/.ssh/config` and its `Include` chain
 alone — by construction, not the extra files. Rows sourced from one were therefore
-displayed with a `HostName`, `Port`, `User` and `ProxyJump` that ssh never saw, and the
+displayed with a `HostName`, `Port`, `User` and proxy route that ssh never saw, and the
 connection went somewhere other than the preview said.
 
 The `ProxyJump` case is why this is a correctness rule and not a preference: such a host is
@@ -404,25 +408,29 @@ marked `~` and skipped by the probe, so nothing looked wrong, and the operator s
 host they believed was reached through a bastion while ssh connected directly. On an
 engagement that is traffic from an unauthorized source, off the authorized pivot.
 
-`ssh_args = ["-F", other]` is not a workaround and must not be documented as one: `-F` is
-last-wins and _replaces_ `~/.ssh/config` rather than merging with it. `Include <abs-path>`
-is the supported mechanism, and it is the one ssh itself resolves.
+`ssh_args = ["-F", other]` is rejected: `-F` replaces `~/.ssh/config` rather than
+merging with it, so the preview and connection would disagree. The same rule
+rejects other routing and identity overrides. `Include <abs-path>` is the
+supported mechanism, and it is the one ssh itself resolves.
 
 ## Error Handling
 
 Each failure mode gets a specific error type and a visible outcome. Nothing is swallowed,
 and no failure leaves a pane that disappears before the operator can read why.
 
-| Failure                                      | Behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No `~/.ssh/config`                           | Overlay renders `no ~/.ssh/config — nothing to pick`; esc closes; exit 0                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `Include` target unreadable                  | Skip that file, continue parsing, footer notes `1 include unreadable`                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Malformed config line                        | Skip the line, never abort the parse; collect as a `Warning`                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `herdr` CLI call fails                       | Footer shows the error, overlay **stays open**. Detail reaches `herdr plugin log` for **action** invocations only; the pane verbs surface it in the pane, which Herdr does not capture — see Logging Reach below                                                                                                                                                                                                                                                                                  |
-| `ssh` not on PATH                            | Session pane prints the resolved command and the error, then waits for a keypress instead of exec'ing — otherwise the pane vanishes before the message is readable                                                                                                                                                                                                                                                                                                                                |
-| `caller.json` missing or stale               | Omit `--target-pane`; Herdr falls back to the focused pane. Stale means the recorded pane no longer exists — check it against the pane list before using it                                                                                                                                                                                                                                                                                                                                       |
-| `HERDR_PLUGIN_STATE_DIR` unset or unwritable | The `open-picker` action fails and says so. This is a broken install, not a runtime condition — the variable is part of the plugin env contract, so its absence means we are not running under Herdr, and degrading past it would hide that behind a picker that silently forgets pane placement. Failing fast is safe here specifically because `open-picker` is an action: Herdr durably records its argv, stderr and exit code, so a dead `prefix+i` is diagnosable through `herdr plugin log` |
-| Probe timeout                                | Row shows `○`; never blocks selection                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Failure                            | Behavior                                                                                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| No `~/.ssh/config`                 | Popup renders `no ~/.ssh/config — nothing to pick`; esc closes; exit 0                                                                           |
+| `Include` target unreadable        | Skip that file, continue parsing, and show a footer warning                                                                                      |
+| Malformed SSH config line          | Skip the line, continue parsing, and show a footer warning                                                                                       |
+| Malformed or unknown plugin config | Show a warning, use safe defaults, and disable probing                                                                                           |
+| Invalid recognized plugin value    | Show a warning, reset that value, and preserve the other valid values                                                                            |
+| `herdr` CLI call fails             | Show the error and hold the popup open; pane entrypoints are not captured by `herdr plugin log` — see Logging Reach below                        |
+| `ssh` not on PATH                  | Print the resolved command and error, then wait for enter so the pane does not vanish before the message is read                                 |
+| Forwarded caller missing           | Use `HERDR_ACTIVE_*` for a direct popup; otherwise omit `--target-pane` and let Herdr use its current pane                                        |
+| Forwarded caller pane became stale | Check it against the pane list and omit `--target-pane` if it is no longer live                                                                  |
+| Unsafe `ssh_args`                  | Warn, discard `ssh_args`, and keep other valid plugin settings                                                                                   |
+| Probe timeout                      | Row shows `○`; never blocks selection                                                                                                            |
 
 ### Logging Reach
 

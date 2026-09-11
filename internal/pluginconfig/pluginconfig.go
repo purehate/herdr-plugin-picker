@@ -3,10 +3,12 @@
 package pluginconfig
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -57,13 +59,13 @@ func unusable() Config {
 
 // LoadDir reads dir/config.toml over the defaults. A missing file is not an error.
 //
-// LoadDir ALWAYS returns a usable Config. When the file parses, every key the
-// operator got right is kept and each invalid key falls back to its own default.
-// When the file exists but cannot be read or parsed at all, nothing is kept and
-// Probe is forced off — see unusable. A non-nil error means at least one
-// key was rejected. Callers must report that error and then use the returned
-// Config — NOT discard it for Defaults(). Discarding it would undo an operator's
-// valid `probe = false` because of an unrelated typo elsewhere in the same file,
+// LoadDir ALWAYS returns a usable Config. When the file decodes with only known
+// keys, every key the operator got right is kept and each invalid value falls
+// back to its own default. When the file cannot be read, is malformed, or names
+// an unknown key, nothing is kept and Probe is forced off — see unusable. A
+// non-nil error means at least one key was rejected. Callers must report that
+// error and then use the returned Config — NOT discard it for Defaults(). Doing
+// that would undo a valid `probe = false` because of an unrelated bad value,
 // sending scan traffic the config asked it not to.
 func LoadDir(dir string) (Config, error) {
 	cfg := Defaults()
@@ -85,12 +87,13 @@ func LoadDir(dir string) (Config, error) {
 	if err != nil {
 		return unusable(), fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
-	if err := toml.Unmarshal(raw, &cfg); err != nil {
+	decoder := toml.NewDecoder(bytes.NewReader(raw)).DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
 		// go-toml applies keys as it parses and stops at the syntax error, so
-		// cfg now holds whatever happened to sit above it. That truncation
-		// point is arbitrary — `probe = false` above the bad line lands, the
-		// identical line below it does not — so keeping the partial result
-		// would make behavior depend on line order. Discard it.
+		// cfg now holds whatever happened to sit above it. Strict decoding also
+		// rejects unknown keys: without it, a misspelled `proeb = false` is
+		// silently ignored and probing stays on. In either case we cannot trust
+		// the partial result, so discard it and fail probing closed.
 		return unusable(), fmt.Errorf("%w: %w", ErrInvalid, err)
 	}
 
@@ -107,5 +110,97 @@ func LoadDir(dir string) (Config, error) {
 		errs = append(errs, fmt.Errorf("%w: probe_timeout_ms must be positive, got %d", ErrInvalid, cfg.ProbeTimeoutMS))
 		cfg.ProbeTimeoutMS = defaultProbeTimeoutMS
 	}
+	if err := validateSSHArgs(cfg.SSHArgs); err != nil {
+		errs = append(errs, fmt.Errorf("%w: %w", ErrInvalid, err))
+		cfg.SSHArgs = nil
+	}
 	return cfg, errors.Join(errs...)
+}
+
+// validateSSHArgs accepts SSH client options while rejecting anything that
+// can make ssh resolve a different connection than the picker displayed and
+// probed. Values such as ConnectTimeout remain available through -o; routing,
+// identity and address-selection settings belong in ~/.ssh/config so there is
+// one source of truth for both paths.
+func validateSSHArgs(args []string) error {
+	const noValue = "AaCfGgKkMNnqsTtVvXxYy"
+	const withValue = "cDEeILmOQRSWw"
+	const changesPreview = "46BbFiJlPp"
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i != len(args)-1 {
+				return fmt.Errorf("ssh_args may contain options only; %q follows --", args[i+1])
+			}
+			continue
+		}
+		if len(arg) < 2 || arg[0] != '-' {
+			return fmt.Errorf("ssh_args may contain options only, got positional argument %q", arg)
+		}
+
+		for pos := 1; pos < len(arg); pos++ {
+			option := arg[pos]
+			switch {
+			case strings.ContainsRune(changesPreview, rune(option)):
+				return fmt.Errorf("ssh_args option -%c can change the displayed connection; put it in ~/.ssh/config", option)
+			case strings.ContainsRune(noValue, rune(option)):
+				continue
+			case option == 'o' || strings.ContainsRune(withValue, rune(option)):
+				value := arg[pos+1:]
+				if value == "" {
+					i++
+					if i >= len(args) {
+						return fmt.Errorf("ssh_args option -%c needs a value", option)
+					}
+					value = args[i]
+				}
+				if option == 'o' {
+					if err := validateSSHOption(value); err != nil {
+						return err
+					}
+				}
+				// An option with a value consumes the rest of this argv element,
+				// so none of its bytes are more short options to inspect.
+				pos = len(arg)
+			default:
+				return fmt.Errorf("ssh_args contains unknown option -%c", option)
+			}
+		}
+	}
+	return nil
+}
+
+func validateSSHOption(value string) error {
+	key := value
+	if i := strings.IndexAny(key, "= \t"); i >= 0 {
+		key = key[:i]
+	}
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" || strings.HasPrefix(key, "-") {
+		return fmt.Errorf("ssh_args -o needs a keyword=value option, got %q", value)
+	}
+
+	changesPreview := map[string]bool{
+		"addressfamily":               true,
+		"bindaddress":                 true,
+		"bindinterface":               true,
+		"canonicaldomains":            true,
+		"canonicalizefallbacklocal":   true,
+		"canonicalizehostname":        true,
+		"canonicalizemaxdots":         true,
+		"canonicalizepermittedcnames": true,
+		"hostname":                    true,
+		"identityfile":                true,
+		"include":                     true,
+		"port":                        true,
+		"proxycommand":                true,
+		"proxyjump":                   true,
+		"tag":                         true,
+		"user":                        true,
+	}
+	if changesPreview[key] {
+		return fmt.Errorf("ssh_args -o %s can change the displayed connection; put it in ~/.ssh/config", key)
+	}
+	return nil
 }

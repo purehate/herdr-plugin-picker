@@ -102,15 +102,16 @@ func TestLoadHostsWarnsWhenThePrimaryConfigIsUnreadable(t *testing.T) {
 	}
 }
 
-func TestTargetsForJoinsHostAndPortAndSkipsProxyJump(t *testing.T) {
+func TestTargetsForJoinsHostAndPortAndSkipsProxies(t *testing.T) {
 	hosts := []sshconfig.Host{
 		{Alias: "a", HostName: "10.0.0.1", Port: "22"},
 		{Alias: "b", HostName: "10.0.0.2", Port: "2222"},
 		{Alias: "c", HostName: "10.0.0.3", Port: "22", ProxyJump: "a"},
+		{Alias: "d", HostName: "10.0.0.4", Port: "22", ProxyCommand: "ssh gateway -W %h:%p"},
 		{Alias: "v6", HostName: "::1", Port: "22"},
 	}
 	got := targetsFor(hosts)
-	if len(got) != 4 {
+	if len(got) != 5 {
 		t.Fatalf("targets = %+v", got)
 	}
 	if got[0].Addr != "10.0.0.1:22" || got[1].Addr != "10.0.0.2:2222" {
@@ -123,11 +124,11 @@ func TestTargetsForJoinsHostAndPortAndSkipsProxyJump(t *testing.T) {
 	// Up: false and every IPv6 host renders a false down. Assert the bracketed
 	// form specifically — a strings.Contains(addr, "::1") check passes under
 	// the concatenating version and proves nothing.
-	if got[3].Addr != "[::1]:22" {
-		t.Errorf("IPv6 addr = %q, want %q", got[3].Addr, "[::1]:22")
+	if got[4].Addr != "[::1]:22" {
+		t.Errorf("IPv6 addr = %q, want %q", got[4].Addr, "[::1]:22")
 	}
-	if got[2].Skip != true {
-		t.Error("a ProxyJump host was not skipped — probing it would dial the wrong network")
+	if !got[2].Skip || !got[3].Skip {
+		t.Error("proxied hosts were not skipped — probing them would dial the wrong network")
 	}
 	if got[0].Skip || got[1].Skip {
 		t.Error("direct hosts were skipped")
@@ -185,7 +186,7 @@ func TestSSHConfigPathUsesHome(t *testing.T) {
 // The rejected alternative was filepath.Join(".ssh", "config"), which is
 // cwd-relative: ssh never reads $CWD/.ssh/config, so the picker would enumerate
 // hosts from a file `ssh <alias>` provably ignores and describe each row with a
-// HostName, Port, User and ProxyJump the connection would not use. In a
+// HostName, Port, User and proxy route the connection would not use. In a
 // directory the operator did not author — a loot share, an extracted archive, a
 // mounted target filesystem — a planted .ssh/config would become the host list.
 // That is the extra_config_paths defect (5a31f54) reached by another route, and

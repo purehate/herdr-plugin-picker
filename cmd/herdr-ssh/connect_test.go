@@ -228,8 +228,8 @@ const strangerPanesJSON = `{"id":1,"result":{"panes":[
 func TestPerformSelectionDropsAStaleCallerPane(t *testing.T) {
 	api, calls := fakeAPI(strangerPanesJSON)
 	sel := picker.Selection{Host: devHost, Placement: "split"}
-	// caller.json outlives the pane it names: it survives herdr restarts and the
-	// closure of the pane the operator opened the picker from.
+	// Caller context is captured when the picker opens, but the pane it names can
+	// still close before the operator makes a selection.
 	ctx := caller{PaneID: "w5:pA", TabID: "w5:t1", WorkspaceID: "w5"}
 
 	if err := performSelection(io.Discard, api, pluginconfig.Defaults(), sel, ctx); err != nil {

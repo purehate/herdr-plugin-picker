@@ -55,13 +55,15 @@ func TestMain(m *testing.M) {
 		"HOME":                      home,
 		"HERDR_CONFIG_PATH":         "",
 		"HERDR_PLUGIN_CONFIG_DIR":   "",
-		"HERDR_PLUGIN_STATE_DIR":    "",
 		"HERDR_PANE_ID":             "",
 		"HERDR_TAB_ID":              "",
 		"HERDR_WORKSPACE_ID":        "",
 		"HERDR_ACTIVE_PANE_ID":      "",
 		"HERDR_ACTIVE_TAB_ID":       "",
 		"HERDR_ACTIVE_WORKSPACE_ID": "",
+		callerPaneEnv:               "",
+		callerTabEnv:                "",
+		callerWorkspaceEnv:          "",
 		"HERDR_SSH_TARGET":          "",
 	} {
 		if err := os.Setenv(k, v); err != nil {
@@ -85,13 +87,15 @@ func clearHerdrEnv(t *testing.T) {
 	for _, k := range []string{
 		"HERDR_CONFIG_PATH",
 		"HERDR_PLUGIN_CONFIG_DIR",
-		"HERDR_PLUGIN_STATE_DIR",
 		"HERDR_PANE_ID",
 		"HERDR_TAB_ID",
 		"HERDR_WORKSPACE_ID",
 		"HERDR_ACTIVE_PANE_ID",
 		"HERDR_ACTIVE_TAB_ID",
 		"HERDR_ACTIVE_WORKSPACE_ID",
+		callerPaneEnv,
+		callerTabEnv,
+		callerWorkspaceEnv,
 	} {
 		t.Setenv(k, "")
 	}
@@ -174,12 +178,10 @@ func TestPluginConfigDirPrefersTheEnvVar(t *testing.T) {
 	}
 }
 
-// TestResolveCallerUsesTheActivePaneWhenNoCallerWasRecorded is the placement
-// half. In popup mode nothing writes caller.json — openPicker never runs, since
-// the popup execs the picker verb directly — so readCaller returns the zero
-// value and the split lost its target. herdr does export the operator's pane as
-// HERDR_ACTIVE_PANE_ID, which is the same pane openPicker would have recorded.
-func TestResolveCallerUsesTheActivePaneWhenNoCallerWasRecorded(t *testing.T) {
+// TestResolveCallerUsesTheActivePaneWhenNoCallerWasForwarded is the direct
+// popup path. That launch bypasses openPicker, so no HERDR_SSH_CALLER_* values
+// exist; herdr exports the operator's pane as HERDR_ACTIVE_PANE_ID instead.
+func TestResolveCallerUsesTheActivePaneWhenNoCallerWasForwarded(t *testing.T) {
 	clearHerdrEnv(t)
 	t.Setenv("HERDR_ACTIVE_PANE_ID", "wD:p2")
 	t.Setenv("HERDR_ACTIVE_TAB_ID", "wD:t2")
@@ -192,26 +194,23 @@ func TestResolveCallerUsesTheActivePaneWhenNoCallerWasRecorded(t *testing.T) {
 	}
 }
 
-// A recorded caller is authoritative. The plugin-pane path writes caller.json
-// before opening the overlay, and that pane is the operator's; HERDR_ACTIVE_*
-// read from inside the overlay pane would name the overlay itself.
-func TestResolveCallerKeepsARecordedCaller(t *testing.T) {
+// A forwarded caller is authoritative. The action captures it before opening
+// the picker; HERDR_ACTIVE_* read inside the picker could name the picker.
+func TestResolveCallerKeepsAForwardedCaller(t *testing.T) {
 	clearHerdrEnv(t)
 	t.Setenv("HERDR_ACTIVE_PANE_ID", "wD:pOVERLAY")
 	t.Setenv("HERDR_ACTIVE_TAB_ID", "wD:t9")
 	t.Setenv("HERDR_ACTIVE_WORKSPACE_ID", "wD")
 
-	recorded := caller{PaneID: "w4:p3", TabID: "w4:t1", WorkspaceID: "w4"}
-	if got := resolveCaller(recorded); got != recorded {
-		t.Errorf("resolveCaller(%+v) = %+v, want the recorded caller untouched", recorded, got)
+	forwarded := caller{PaneID: "w4:p3", TabID: "w4:t1", WorkspaceID: "w4"}
+	if got := resolveCaller(forwarded); got != forwarded {
+		t.Errorf("resolveCaller(%+v) = %+v, want the forwarded caller untouched", forwarded, got)
 	}
 }
 
 // TestResolveCallerFillsOnlyWhatIsMissing covers the partial case rather than
-// treating "no pane id" as "no caller at all": a caller.json carrying a pane id
-// but an empty workspace should keep the id and gain the workspace, because
-// FocusPane compares the target's workspace against this value and a wrong
-// non-empty value is worse than an absent one.
+// treating "no pane id" as "no caller at all": forwarded context carrying a
+// pane id but an empty workspace should keep the id and gain the workspace.
 func TestResolveCallerFillsOnlyWhatIsMissing(t *testing.T) {
 	clearHerdrEnv(t)
 	t.Setenv("HERDR_ACTIVE_PANE_ID", "wD:pACTIVE")
