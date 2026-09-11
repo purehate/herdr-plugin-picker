@@ -5095,6 +5095,20 @@ The fix derives the row budget from `m.height`. It has to _measure_ the chrome r
 
 The `maxRows` ceiling stays. In any pane with room to spare the budget saturates at the ceiling and the output is byte-identical to Task 14's, so this is a fix for short panes and nothing else moves. `maxRows` also keeps its second job as the `height == 0` fallback, so the first frame — drawn before any `WindowSizeMsg` arrives — is the frame a roomy pane would draw rather than an empty list.
 
+> **Correction (`ed23d73`): the ceiling did not stay.** The paragraph above is
+> the historical record of Task 14b's decision and is left as written. What it
+> got wrong is the premise, not the arithmetic: it treated the ceiling as free
+> because "in any pane with room to spare the output is byte-identical to Task
+> 14's" — which is true, and is the problem. The picker does not choose its own
+> size. herdr sizes the popup from `width`/`height` on the keybinding and hands
+> the plugin the pane that results, so a ceiling under that pane does not keep
+> the box small, it leaves it empty. At the operator's `60%` binding two thirds
+> of the popup rendered as void, and the operator said so. The ceiling is gone;
+> the constant survives as `fallbackRows`, which is only the second job the
+> paragraph describes — the `height == 0` first frame. Nothing else in Task 14b
+> changes: the chrome is still measured rather than written down, and the floor
+> is still one host row.
+
 Note on width: `m.width` stays written and deliberately unread. Pane width is not part of this fix, and the spec's `### Layout` section states that pane width is deliberately unused — so this is the spec's position, not a departure from it. Deviation 7, which recorded it as a departure, is retired for that reason.
 
 - [x] **Step 1: Add the height-aware test helpers**
@@ -7501,13 +7515,15 @@ Expected: `config check` prints exactly `config: ok`, then the reload succeeds. 
 
 - [ ] **Step 5: Smoke-test the popup by hand** — _unticked: needs the operator at the keyboard._
 
-Press `prefix+i`. Verify each of these, in order. Items 1a-1d are the frame itself, and they are the ones to look at first: they are what `cbd1249` and the bordered-dialog commit changed, and a wrong accent here means the config resolution regressed rather than the theme being wrong.
+Press `prefix+i`. Verify each of these, in order. Items 1a-1f are the frame itself, and they are the ones to look at first: they are what `cbd1249`, `ed23d73` and `cdf54f3` changed, and a wrong accent here means the config resolution regressed rather than the theme being wrong.
 
 1. A floating box appears listing hosts from `~/.ssh/config`, in the accent color from `[ui].accent` (`#14e21a` on this machine) — **not** the built-in blue `#89b4fa`, which is what an unresolved `HERDR_CONFIG_PATH` silently falls back to
-   - 1a. It is drawn as a **bordered dialog**: a single-line box with the query as a title, a rule under it, and the key hints at the bottom — the shape of herdr's own settings dialog
-   - 1b. The cursor row is a **full-width accent band with a `▸` marker**, not a colored word
+   - 1a. There is exactly **one** border, herdr's own, labelled `popup`. The frame draws none of its own. Two concentric boxes a cell apart is the defect `ed23d73` fixed, and herdr's cannot be turned off — if a second one is back, the frame regrew a border rather than herdr growing one.
+   - 1b. The cursor row is a **full-width accent band with a `▸` marker**, running edge to edge with no gaps in it. Dark slots inside the band mean a column separator lost its styling: reverse video only paints cells a style actually renders.
    - 1c. `↵ split` in the footer is an **inverted chip**; the remaining hints are muted
    - 1d. Typing a query underlines the matched characters on the banded row and accents them on every other row
+   - 1e. The hostnames form **one column**, not a ragged edge stepping with each alias's length
+   - 1f. The list **fills the popup**. Blank space below the last host, with more hosts than rows drawn, means a row ceiling is back — the popup's size is the operator's to set on the keybinding (`width`/`height`), and the plugin's job is to fill whatever it is handed. If the popup is simply taller than the host list, shrink the binding; that is config, not a bug.
 2. The `colima` host from the existing `Include` is present — the include chain resolved
 3. Typing filters the list; the cursor snaps back to the top
 4. Status markers fill in shortly after the box opens (`●` reachable, `○` not); first paint did not wait on the network
@@ -7528,7 +7544,7 @@ lines is not observable from Go.
 
 14. The preview sheds fields from the bottom as the pane shrinks — `source` goes first, then `Port`, then the whole block including its `─────` separator — and the key-hints row never disappears. Each line the preview gives up should become another host row, so the box stays full rather than shrinking.
 15. `^o` in a pane too short for the preview does nothing, and specifically does not corrupt the frame. This is accepted behavior, not a bug: the preview cannot fit whatever the toggle says. Worth an explicit look because it is the one key that silently no-ops.
-16. **Watch for smearing rather than clean truncation at the floor.** Below about 9 rows the frame stops shrinking and is allowed to exceed the pane. (It was 4 before the frame was boxed; the border, the title block and the footer now cost 7 lines, and the floor is those plus one host row and the overflow notice. `frameChrome` in `view_test.go` is the number to re-derive this from if the frame changes again.) The floor exists because one host row and the key hints are worth more than a perfect fit. But the picker renders **inline, not in the alt screen**, and bubbletea's inline renderer sizes the frame to the content (`cursed_renderer.go` sets `frameArea.Max.Y = content.Height()`) instead of clamping to the terminal. So an over-tall frame may scroll the surrounding pane or leave residue behind after `esc` rather than being cut off at the pane edge. If that happens, the overflow is the trigger but the renderer is the cause — file it against the floor's size, not against the shedding logic, and note whether `esc` leaves the pane clean.
+16. **Watch for smearing rather than clean truncation at the floor.** Below about 7 rows the frame stops shrinking and is allowed to exceed the pane. (It was 4 before the frame became a dialog and 9 while the frame drew its own border; the title block and the footer cost 5 lines now that the border is herdr's, and the floor is those plus one host row and the overflow notice. `frameChrome` in `view_test.go` is the number to re-derive this from if the frame changes again.) The floor exists because one host row and the key hints are worth more than a perfect fit. But the picker renders **inline, not in the alt screen**, and bubbletea's inline renderer sizes the frame to the content (`cursed_renderer.go` sets `frameArea.Max.Y = content.Height()`) instead of clamping to the terminal. So an over-tall frame may scroll the surrounding pane or leave residue behind after `esc` rather than being cut off at the pane edge. If that happens, the overflow is the trigger but the renderer is the cause — file it against the floor's size, not against the shedding logic, and note whether `esc` leaves the pane clean.
 17. Run a `session` verb that **exits non-zero** — point it at a host that refuses the connection — then check `herdr pane list`. Nothing should be left behind: no pane, and no stray `ssh:<alias>` entry. A failed connect that leaks a pane is the defect `f620f4a` fixed.
 18. Run one that **exits zero** — connect, then type `exit` at the remote shell — and check `herdr pane list` again. Record whether the pane is reaped or persists. Both are defensible; the plan needs to know which one herdr actually does.
 19. If it persists, check whether it **keeps its `ssh:<alias>` label**. A labelled but dead pane is precisely what `performSelection`'s reuse scan matches on, so the next pick would focus a corpse instead of opening a session — the same defect class as `f620f4a`, reached from the other side. None of items 17-19 is covered by a unit test, which is why they are here.
