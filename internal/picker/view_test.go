@@ -335,6 +335,101 @@ func TestPreviewLabelsPadToACommonWidth(t *testing.T) {
 	}
 }
 
+// columnHosts builds hosts whose aliases differ in width and whose hostnames
+// share no substring with any alias, so a plain-text index of the hostname is
+// unambiguously where the detail column starts.
+func columnHosts(aliases ...string) []sshconfig.Host {
+	names := []string{"one.invalid", "two.invalid", "six.invalid", "ten.invalid", "own.invalid"}
+	hosts := make([]sshconfig.Host, 0, len(aliases))
+	for i, a := range aliases {
+		hosts = append(hosts, sshconfig.Host{Alias: a, HostName: names[i%len(names)], Port: "22"})
+	}
+	return hosts
+}
+
+// detailColumns is the display column each host row's detail half starts at,
+// keyed by alias.
+//
+// Rows are located by hostname rather than by alias: columnHosts gives every
+// host a unique one, whereas a short alias is a substring of longer aliases and
+// of most text on the frame, and differing alias widths is the whole point of
+// the fixture.
+func detailColumns(t *testing.T, frame string, hosts []sshconfig.Host) map[string]int {
+	t.Helper()
+	at := make(map[string]int, len(hosts))
+	for _, h := range hosts {
+		for _, l := range frameLines(frame) {
+			p := stripANSI(l)
+			i := strings.Index(p, h.HostName)
+			if i < 0 {
+				continue
+			}
+			if !strings.Contains(p[:i], h.Alias) {
+				t.Fatalf("row %q holds hostname %q but not its alias %q", p, h.HostName, h.Alias)
+			}
+			at[h.Alias] = lipgloss.Width(p[:i])
+			break
+		}
+	}
+	if len(at) != len(hosts) {
+		t.Fatalf("found %d of %d host rows in:\n%s", len(at), len(hosts), stripANSI(frame))
+	}
+	return at
+}
+
+// TestHostRowsPadToACommonDetailColumn is the list's half of the argument
+// TestPreviewLabelsPadToACommonWidth makes about the preview. The detail column
+// shipped ragged — every row was alias plus two spaces — so the hostnames
+// stepped in and out as the operator scanned, which is the one thing scanning a
+// list is for.
+//
+// The fixture's aliases differ in width on purpose: a common column proves
+// nothing if every alias is already the same length, which is exactly why the
+// existing manyHosts fixture (host00..hostNN) could never have caught this.
+func TestHostRowsPadToACommonDetailColumn(t *testing.T) {
+	hosts := columnHosts("aa", "bbbb", "cccccccccc")
+	m := newModel(Options{Hosts: hosts, Theme: theme.Default()})
+	at := detailColumns(t, renderSized(m, 80, 20), hosts)
+
+	// The widest alias is 10, plus the "  ▸ " gutter and the two-space gap.
+	want := at["cccccccccc"]
+	for _, h := range hosts {
+		if at[h.Alias] != want {
+			t.Errorf("alias %q puts its detail at column %d, want %d — the detail column is ragged:\n%s",
+				h.Alias, at[h.Alias], want, stripANSI(renderSized(m, 80, 20)))
+		}
+	}
+}
+
+// TestAnOverlongAliasDoesNotPushEveryOtherRow covers the cap. Without it a
+// single pathological alias costs every row in the list the width of it, and
+// the detail column is the part with the addresses in it.
+//
+// The long alias goes ragged alone: it still gets its two-space gutter, and it
+// is the only row past the shared column.
+func TestAnOverlongAliasDoesNotPushEveryOtherRow(t *testing.T) {
+	long := strings.Repeat("x", maxAliasColumn+12)
+	hosts := columnHosts("aa", "bbbb", long)
+	m := newModel(Options{Hosts: hosts, Theme: theme.Default()})
+	at := detailColumns(t, renderSized(m, 120, 20), hosts)
+
+	if at["aa"] != at["bbbb"] {
+		t.Errorf("the short rows disagree on the detail column: %d vs %d", at["aa"], at["bbbb"])
+	}
+	// Capped, so the shared column is set by maxAliasColumn and not by the long
+	// alias. Spelled as maxAliasColumn+2 relative to the "a" row's own alias
+	// start, which is what makes this an assertion about the cap rather than
+	// about whatever the rows happen to agree on.
+	gutter := at["aa"] - (maxAliasColumn + 2)
+	if gutter < 0 {
+		t.Fatalf("the short rows' detail column is %d, which is inside the %d-column cap", at["aa"], maxAliasColumn)
+	}
+	if want := gutter + len(long) + 2; at[long] != want {
+		t.Errorf("the overlong alias puts its detail at column %d, want %d — it should go ragged with a two-space gutter",
+			at[long], want)
+	}
+}
+
 // warnCap is the number of warnings the footer lists before it stops listing
 // them and counts the rest.
 //

@@ -369,8 +369,35 @@ func (m model) window() ([]Match, int) {
 	return m.view[start : start+rows], m.cursor - start
 }
 
+// maxAliasColumn caps how far the detail column can be pushed right. One
+// unusually long alias should not cost every other row the width of it; past
+// this the long row goes ragged on its own and the rest stay aligned.
+const maxAliasColumn = 28
+
+// aliasColumn is the column every row's detail half starts at, measured from
+// the widest alias the picker loaded.
+//
+// Measured over m.opts.Hosts rather than over the rows on screen, for the
+// reason previewLabelWidth is a constant: an edge that moves is worse than an
+// edge further right, and scanning the list is what the picker is for. The
+// visible window would shift the edge on every scroll, and m.view would shift
+// it on every keystroke. The whole loaded set shifts it never.
+func (m model) aliasColumn() int {
+	w := 0
+	for _, h := range m.opts.Hosts {
+		if n := lipgloss.Width(h.Alias); n > w {
+			w = n
+		}
+	}
+	if w > maxAliasColumn {
+		return maxAliasColumn
+	}
+	return w
+}
+
 func (m model) renderRows(s styles) string {
 	rows, cursor := m.window()
+	col := m.aliasColumn()
 	var b strings.Builder
 	for i, row := range rows {
 		h := row.Host
@@ -443,7 +470,14 @@ func (m model) renderRows(s styles) string {
 		if selected {
 			gap = s.chip
 		}
-		line := pointer + style.Render(marker) + gap.Render(" ") + alias + gap.Render("  ") + detail
+		// Pad the alias out to the shared column so the detail halves form one
+		// edge. Two spaces is the floor, so an alias over maxAliasColumn still
+		// gets a gutter instead of running into its own hostname.
+		pad := col - lipgloss.Width(alias) + 2
+		if pad < 2 {
+			pad = 2
+		}
+		line := pointer + style.Render(marker) + gap.Render(" ") + alias + gap.Render(strings.Repeat(" ", pad)) + detail
 		if selected {
 			line = bar(line, m.innerWidth(), s.chip)
 		}
