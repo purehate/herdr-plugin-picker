@@ -153,9 +153,22 @@ func (c Client) FocusPane(p Pane, currentWorkspace, currentTab string) error {
 
 // OpenOpts describes a pane to open from a declared plugin entrypoint.
 //
-// Sizing (--width/--height) is popup-only and has no field here on purpose: we
-// open no popups, so a guard for it would never be exercised. Note that only
-// one popup may be open at a time, which rules popup out for the picker.
+// Sizing (--width/--height) is popup-only and has no field here on purpose:
+// this API opens no popups, so a guard for it would never be exercised.
+//
+// "This API", not "this plugin" — the distinction the original comment here got
+// wrong. The floating box the picker draws in *is* a popup; it just does not
+// come from `plugin pane open`. It is a keybinding: `type = "popup"` in the
+// operator's herdr config, with the width and height on the binding. Overlay is
+// not the floating version of this call — it is a full-pane placement like the
+// rest, which is why binding the picker to overlay produced a pane rather than
+// the box that was asked for.
+//
+// The single-popup limit (`ui_busy` / `a popup pane is already open`) is real
+// and is why routing the picker through this API as a popup was never the path,
+// but it is not a reason popup is absent from the vocabulary below. Both values
+// parse; `--help` under-reports the list and the bare `herdr plugin pane` usage
+// line is the accurate one. Do not prune this field's comment to match --help.
 type OpenOpts struct {
 	Plugin     string
 	Entrypoint string

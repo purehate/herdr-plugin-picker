@@ -650,7 +650,7 @@ branch. Recorded so they are neither lost nor re-litigated.
 1. **`quitting` is write-only in production.** `internal/picker/model.go` declares it, three sites write it, and the only read anywhere is a test. Removing it is a real simplification with no coverage loss: the test pairing it appears in asserts both `quitting` and the returned `tea.Quit`, on the sound reasoning that setting the flag without returning `tea.Quit` would leave Bubble Tea's runtime loop running forever — but the assertion carrying that reasoning is the `tea.Quit` one, and the flag half is self-referential. Left for the `view.go` split above, so the package is edited once rather than twice.
 2. **The file split in deviation 9.** The largest item left; see the seams named there.
 3. **An empty `Placement` silently drops `TargetPane` and `Direction`.** `PluginPaneOpen` omits `--placement` when the field is empty and lets herdr apply its own default, which is reasonable on its own. But `PlacementTargetsPane("")` is false, so the `--target-pane` guard also declines — and the `--direction` guard tests `Placement == "split"` and declines too. An open with a pane id and a direction therefore sends neither, and says nothing: the flags are dropped by the same lines that exist to drop them correctly, so the omission is indistinguishable from the intended behavior. Unreachable today, and verified so rather than assumed: `choose` is called with only `split`, `tab` and `zoomed`; `openPicker` hardcodes `overlay` and passes no `TargetPane`; `runConnectWith` defaults to `split` and its flag loop rejects any other value. Not fixed because there is no failing behavior to fix and a guard for an unreachable input is a guard no test can exercise — the same reasoning that keeps `--width`/`--height` off `OpenOpts`. It is recorded because it is a trap laid for whoever adds a placement: the natural way to add one is a new constant threaded through `choose`, and nothing in the type, the guards, or the tests will mention that two other fields quietly depend on the value being non-empty and on `PlacementTargetsPane` knowing about it.
-4. **`popup` is in herdr's placement vocabulary and in none of this plugin's paths.** `OpenOpts.Placement` documents it, `PlacementTargetsPane`'s comment reasons about it, and both the CLI flag loop and the picker's keys reject or never produce it. That is deliberate — the comment at `OpenOpts` records why (only one popup may be open at a time, which rules it out for the picker) — so this is not a gap to close. It is listed next to the entry above because it is the same asymmetry from the other side: the type's vocabulary is herdr's, the code's is narrower, and the two are kept in agreement by comments rather than by anything that fails. A future placement inherits that.
+4. **`popup` is in herdr's placement vocabulary and in none of this plugin's paths.** `OpenOpts.Placement` documents it, `PlacementTargetsPane`'s comment reasons about it, and both the CLI flag loop and the picker's keys reject or never produce it. That is deliberate — the comment at `OpenOpts` records why (only one popup may be open at a time, which ruled it out for the _plugin-pane_ path) — so this is not a gap to close. Read that as "no popup is opened through `herdrapi`", not "the picker is not a popup": the picker floats in a popup **keybinding**, which never touches this API. See the correction under the placement findings below. It is listed next to the entry above because it is the same asymmetry from the other side: the type's vocabulary is herdr's, the code's is narrower, and the two are kept in agreement by comments rather than by anything that fails. A future placement inherits that.
 
 **Rejected proposals:** declined designs, recorded so they are not re-proposed.
 Distinct from the deviations above: a deviation records where the implementation
@@ -783,7 +783,11 @@ Probing the Task 15-19 argv this way established three more things:
 
 `plugin pane open --help` lists ten options and **`--width`/`--height` are not among them**, yet the usage line documents `[--width SIZE] [--height SIZE]` and `--width 80 --height 24` parses (exit 1 `plugin_not_found`, not exit 2 `unknown option`). That is the third help-vs-reality divergence, and all three point the same way: **`--help` is a subset of what the parser accepts, never a superset.** We emit neither flag, so this is recorded for whoever adds sizing — expect a popup-only guard, and don't infer its absence from `--help`.
 
-**Only one popup may be open at a time:** `ui_busy` / `a popup pane is already open`. The picker uses `overlay`, so this is inert — but if a later task reconsiders `popup` for the picker, that is a hard single-instance limit and a second failure mode to handle on the open path, not just a placement swap.
+**Only one popup may be open at a time:** `ui_busy` / `a popup pane is already open`. The plugin-pane entrypoint uses `overlay`, so this is inert on the `plugin pane open` path — but if a later task reconsiders `popup` _there_, that is a hard single-instance limit and a second failure mode to handle on the open path, not just a placement swap.
+
+**Correction, and the most expensive wrong assumption in this plan: `overlay` is not a floating box.** It was written throughout as if it were the floating placement, and it is not — it is a full-pane placement like `split`, `tab` and `zoomed`. Binding the picker to it produced a pane, which is exactly what the operator said it should not be. **The floating box is a keybinding type, not a placement:** in the operator's herdr config, `type = "popup"` with `width`/`height` in cells or percentages. That is a separate mechanism from `plugin pane open` and does not go through `herdrapi` at all.
+
+The two launch modes therefore get **different environments**, which is the other half of the same mistake. A plugin pane gets `HERDR_PLUGIN_CONFIG_DIR`, `HERDR_PLUGIN_STATE_DIR` and `HERDR_PANE_ID`. A popup gets none of those — measured on 0.9.0, it gets `HERDR_ACTIVE_PANE_CWD`, `HERDR_ACTIVE_PANE_ID`, `HERDR_ACTIVE_TAB_ID`, `HERDR_ACTIVE_WORKSPACE_ID`, `HERDR_BIN_PATH`, `HERDR_ENV` and `HERDR_SOCKET_PATH`. Reading the plugin-pane variables directly meant `theme.LoadFile("")` and `pluginconfig.LoadDir("")`, both of which return defaults for an empty path **without an error**, so in the one mode that actually floats the picker silently drew in the built-in blue and discarded the whole plugin config. Fixed in `cbd1249` (`cmd/herdr-ssh/env.go`): each resolver prefers its variable and falls back to the documented location. Anything added later that reads a `HERDR_*` variable must go through a resolver there, or it will work in a plugin pane and fail silently in the popup.
 
 **`herdr pane rename --clear <id>` does not work — `--clear` is consumed as the pane id.** It must come _after_ the pane id: `pane rename <id> --clear`. Flag-first yields `pane --clear not found`, which reads like a missing pane rather than an argument-order bug. `--help` prints `Usage: herdr pane rename [OPTIONS] <PANE_ID> [LABEL]...` with `--clear` as a declared option, implying flag-first is legal; the runtime parser disagrees. That is the second independent case of the help text being wrong, which is why the exit-code probe above is the rule rather than a suggestion. `PaneRename` does not use `--clear` today; this is recorded so whoever adds label-clearing doesn't rediscover it in the field.
 
@@ -7409,7 +7413,7 @@ This is worth writing down for two reasons. It narrows what is actually unverifi
 
 Two of the checks written on the way there were wrong, in the way this plan keeps recording. A `connect <absent-alias>` lookup reporting `host not found` proves nothing about parsing: the output is byte-identical with no config file present at all, which is why the fixture-alias cases above are the ones carrying the claim. And a missing `Include` target was expected to raise a warning; `parseIncludes` documents that an absent target is silent on purpose, verified against OpenSSH_10.3p1, because warning there false-positives on an optional tool-managed include. The discriminator for that path is a present-but-unreadable target, not an absent one.
 
-- [ ] **Step 1: Link the plugin into herdr** — _unticked: needs a live herdr session; the operator runs this task by hand._
+- [x] **Step 1: Link the plugin into herdr** — _done; the `jq -e` check below was re-run against the live socket and returned the expected object exactly._
 
 ```bash
 cd ~/DEVELOPMENT/herdr-plugin-ssh
@@ -7449,7 +7453,7 @@ herdr plugin list --json --plugin purehate.herdr-ssh | jq '.result.plugins[0]'
 
 `manifest_path` and `plugin_root` in that record confirm herdr resolved the link to the right directory.
 
-- [ ] **Step 2: Confirm the config parses before touching it** — _unticked: needs a live herdr session; the operator runs this task by hand._
+- [x] **Step 2: Confirm the config parses before touching it** — _done; `config: ok`._
 
 ```bash
 herdr config check
@@ -7459,22 +7463,32 @@ Expected: `config: ok`
 
 Run this _before_ Step 3 so a pre-existing config problem is not mistaken for one the new keybinding introduced.
 
-- [ ] **Step 3: Bind the key** — _unticked: needs a live herdr session; the operator runs this task by hand._
+- [x] **Step 3: Bind the key** — _done, but **not** with the binding this step originally prescribed. The block below is what is actually in the operator's config and what produces a floating box._
 
 Append to `~/.config/herdr/config.toml`:
 
 ```toml
 [[keys.command]]
 key = "prefix+i"
-type = "plugin_action"
-command = "purehate.herdr-ssh.open-picker"
+type = "popup"
+command = "/Users/operator/DEVELOPMENT/herdr-plugin-ssh/bin/herdr-ssh picker"
+width = "60%"
+height = "60%"
+description = "SSH picker"
 ```
 
-The schema is verified against the operator's live config, which already contains sixteen blocks of exactly this shape (`herdr-nvim-nav.left` on `ctrl+h`, and others). `command` is the `<plugin_id>.<action_id>` pair joined with a dot — `purehate.herdr-ssh` plus `open-picker`.
+**Why this and not the `plugin_action` block this step used to prescribe.** That version was written, bound, and reloaded, and it worked — it just opened a _pane_, because the action it invokes opens the `picker` entrypoint at `placement = "overlay"`, and overlay is a full-pane placement, not a floating one. The floating box is a **keybinding type**, `type = "popup"`, and the sizing lives on the binding. See the placement correction in the findings above.
+
+Two consequences worth stating here rather than leaving to be rediscovered:
+
+- `command` is a **shell command**, not a `<plugin_id>.<action_id>` pair, so it names the built binary by absolute path. `bin/herdr-ssh` is gitignored — **rebuild it after any change to the picker or the popup keeps running the old code.** `go build -o bin/herdr-ssh ./cmd/herdr-ssh`.
+- A popup is launched as a bare process, so herdr exports **none** of the plugin-pane environment for it. That is what `cbd1249` fixed and why `cmd/herdr-ssh/env.go` exists; see the correction in the findings above before adding any new `HERDR_*` read.
+
+The `plugin_action` entrypoints stay registered and are still reachable — this binding is an addition, not a replacement.
 
 **`prefix+i` is verified free, and `prefix+r` is verified taken.** `herdr --default-config` (374 lines, the authoritative list of built-in bindings — the live config's own header points at it) binds these single letters: `b c e g h j k l n o p q r s v w x z`. `prefix+r` is among them, which is why the picker does not take it. The operator's config additionally binds `d e f m o t y` and several `shift`/`ctrl` combinations. `prefix+i` appears in neither list, leaving it and `prefix+u` as the only free single letters (`prefix` itself is `ctrl+a`). Re-check both lists before substituting a different key.
 
-- [ ] **Step 4: Validate and reload the config** — _unticked: needs a live herdr session; the operator runs this task by hand._
+- [x] **Step 4: Validate and reload the config** — _done; `config check` returns `config: ok` with the popup block in place, and the reload took effect (the binding fires)._
 
 ```bash
 herdr config check
@@ -7485,23 +7499,27 @@ Expected: `config check` prints exactly `config: ok`, then the reload succeeds. 
 
 `config check` was run read-only during planning and returns `config: ok` on the current config, so a diagnostic here means the block just added in Step 3 caused it. `reload-config` was deliberately **not** run during planning: it mutates the running server's state, and the operator's session was live. If the new binding does not take effect, `herdr config reset-keys` backs up `config.toml` and strips custom keybindings — that is the recovery path, and it removes the operator's other sixteen bindings too, so read the backup path it prints before relying on it.
 
-- [ ] **Step 5: Smoke-test the overlay by hand** — _unticked: needs a live herdr session; the operator runs this task by hand._
+- [ ] **Step 5: Smoke-test the popup by hand** — _unticked: needs the operator at the keyboard._
 
-Press `prefix+i`. Verify each of these, in order:
+Press `prefix+i`. Verify each of these, in order. Items 1a-1d are the frame itself, and they are the ones to look at first: they are what `cbd1249` and the bordered-dialog commit changed, and a wrong accent here means the config resolution regressed rather than the theme being wrong.
 
-1. A floating box appears listing hosts from `~/.ssh/config`, in the accent color from `[ui].accent` (`#14e21a` on this machine)
+1. A floating box appears listing hosts from `~/.ssh/config`, in the accent color from `[ui].accent` (`#14e21a` on this machine) — **not** the built-in blue `#89b4fa`, which is what an unresolved `HERDR_CONFIG_PATH` silently falls back to
+   - 1a. It is drawn as a **bordered dialog**: a single-line box with the query as a title, a rule under it, and the key hints at the bottom — the shape of herdr's own settings dialog
+   - 1b. The cursor row is a **full-width accent band with a `▸` marker**, not a colored word
+   - 1c. `↵ split` in the footer is an **inverted chip**; the remaining hints are muted
+   - 1d. Typing a query underlines the matched characters on the banded row and accents them on every other row
 2. The `colima` host from the existing `Include` is present — the include chain resolved
 3. Typing filters the list; the cursor snaps back to the top
 4. Status markers fill in shortly after the box opens (`●` reachable, `○` not); first paint did not wait on the network
 5. `enter` splits the current pane and lands at an ssh prompt for the selected host
-6. The overlay closed itself after acting
+6. The popup closed itself after acting
 7. The new pane's title reads `ssh:<alias>`
 8. `prefix+i` again shows `▪` next to that host
 9. Selecting it again focuses the existing pane instead of opening a second one
 10. `^n` on that same host does open a second pane
 11. `^t` opens a tab, `^z` opens a zoomed pane
 12. `^o` toggles the preview, and the preview shows a `source <file>:<line>` line
-13. `esc` closes the overlay and changes nothing
+13. `esc` closes the popup and changes nothing
 
 Then resize the pane deliberately short — roughly 6 to 8 rows — and check three more.
 These are the ones unit tests cannot reach: `view_test.go` asserts how many lines
@@ -7510,7 +7528,7 @@ lines is not observable from Go.
 
 14. The preview sheds fields from the bottom as the pane shrinks — `source` goes first, then `Port`, then the whole block including its `─────` separator — and the key-hints row never disappears. Each line the preview gives up should become another host row, so the box stays full rather than shrinking.
 15. `^o` in a pane too short for the preview does nothing, and specifically does not corrupt the frame. This is accepted behavior, not a bug: the preview cannot fit whatever the toggle says. Worth an explicit look because it is the one key that silently no-ops.
-16. **Watch for smearing rather than clean truncation at the floor.** Below about 4 rows the frame stops shrinking and is allowed to exceed the pane — one host row and the key hints are worth more than a perfect fit. But the picker renders **inline, not in the alt screen**, and bubbletea's inline renderer sizes the frame to the content (`cursed_renderer.go` sets `frameArea.Max.Y = content.Height()`) instead of clamping to the terminal. So an over-tall frame may scroll the surrounding pane or leave residue behind after `esc` rather than being cut off at the pane edge. If that happens, the overflow is the trigger but the renderer is the cause — file it against the floor's size, not against the shedding logic, and note whether `esc` leaves the pane clean.
+16. **Watch for smearing rather than clean truncation at the floor.** Below about 9 rows the frame stops shrinking and is allowed to exceed the pane. (It was 4 before the frame was boxed; the border, the title block and the footer now cost 7 lines, and the floor is those plus one host row and the overflow notice. `frameChrome` in `view_test.go` is the number to re-derive this from if the frame changes again.) The floor exists because one host row and the key hints are worth more than a perfect fit. But the picker renders **inline, not in the alt screen**, and bubbletea's inline renderer sizes the frame to the content (`cursed_renderer.go` sets `frameArea.Max.Y = content.Height()`) instead of clamping to the terminal. So an over-tall frame may scroll the surrounding pane or leave residue behind after `esc` rather than being cut off at the pane edge. If that happens, the overflow is the trigger but the renderer is the cause — file it against the floor's size, not against the shedding logic, and note whether `esc` leaves the pane clean.
 17. Run a `session` verb that **exits non-zero** — point it at a host that refuses the connection — then check `herdr pane list`. Nothing should be left behind: no pane, and no stray `ssh:<alias>` entry. A failed connect that leaks a pane is the defect `f620f4a` fixed.
 18. Run one that **exits zero** — connect, then type `exit` at the remote shell — and check `herdr pane list` again. Record whether the pane is reaped or persists. Both are defensible; the plan needs to know which one herdr actually does.
 19. If it persists, check whether it **keeps its `ssh:<alias>` label**. A labelled but dead pane is precisely what `performSelection`'s reuse scan matches on, so the next pick would focus a corpse instead of opening a session — the same defect class as `f620f4a`, reached from the other side. None of items 17-19 is covered by a unit test, which is why they are here.
