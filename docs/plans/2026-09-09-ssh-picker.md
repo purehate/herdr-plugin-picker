@@ -7477,28 +7477,28 @@ Expected: `config: ok`
 
 Run this _before_ Step 3 so a pre-existing config problem is not mistaken for one the new keybinding introduced.
 
-- [x] **Step 3: Bind the key** — _done, but **not** with the binding this step originally prescribed. The block below is what is actually in the operator's config and what produces a floating box._
+- [x] **Step 3: Bind the key** — _done. This step has been through two bindings; the block below is the one actually in the operator's config, and the one the README tells a stranger to use._
 
 Append to `~/.config/herdr/config.toml`:
 
 ```toml
 [[keys.command]]
 key = "prefix+i"
-type = "popup"
-command = "/Users/operator/DEVELOPMENT/herdr-plugin-ssh/bin/herdr-ssh picker"
-width = "60%"
-height = "60%"
+type = "plugin_action"
+command = "purehate.herdr-ssh.open-picker"
 description = "SSH picker"
 ```
 
-**Why this and not the `plugin_action` block this step used to prescribe.** That version was written, bound, and reloaded, and it worked — it just opened a _pane_, because the action it invokes opens the `picker` entrypoint at `placement = "overlay"`, and overlay is a full-pane placement, not a floating one. The floating box is a **keybinding type**, `type = "popup"`, and the sizing lives on the binding. See the placement correction in the findings above.
+**The history matters, because both intermediate answers were wrong in instructive ways.** This step first prescribed a `plugin_action` block; it was written, bound, and reloaded, and it worked — it just opened a _pane_, because the action opened the `picker` entrypoint at `placement = "overlay"`, and overlay is a full-pane placement. The conclusion drawn from that, recorded in the findings above, was that _the floating box is a keybinding type_ — so the binding became `type = "popup"` with `width`/`height` on the binding and the built binary named by absolute path.
 
-Two consequences worth stating here rather than leaving to be rediscovered:
+That was half right and it is the half that made the plugin uninstallable. `type = "popup"` does float, but it runs a bare command, so it needs a path only the machine that checked the repo out can know. **`placement = "popup"` is also valid on a manifest pane** — `ray.plugin-manager` ships exactly that shape, with `width` and `height` beside it — so the floating box can come from the plugin rather than from the operator's config. Moving it there (`3dcee6b`) returned this step to a `plugin_action` binding that now floats, with no paths anywhere.
 
-- `command` is a **shell command**, not a `<plugin_id>.<action_id>` pair, so it names the built binary by absolute path. `bin/herdr-ssh` is gitignored — **rebuild it after any change to the picker or the popup keeps running the old code.** `go build -o bin/herdr-ssh ./cmd/herdr-ssh`.
-- A popup is launched as a bare process, so herdr exports **none** of the plugin-pane environment for it. That is what `cbd1249` fixed and why `cmd/herdr-ssh/env.go` exists; see the correction in the findings above before adding any new `HERDR_*` read.
+`herdr plugin pane open --help` lists only `overlay, split, tab, zoomed` and omits `popup`, which is what sent this the long way round. **The help is a subset of what the parser accepts, not a superset** — the API schema's `PluginPanePlacement` enum has `popup` in it.
 
-The `plugin_action` entrypoints stay registered and are still reachable — this binding is an addition, not a replacement.
+Two consequences of the old popup binding, kept because they still apply to anyone who binds one:
+
+- A popup names a **shell command**, not a `<plugin_id>.<action_id>` pair, so it needs the built binary's absolute path. `bin/herdr-ssh` is gitignored — **rebuild it after any change or the popup keeps running the old code.** `go build -o bin/herdr-ssh ./cmd/herdr-ssh`. The `plugin_action` form has neither problem: herdr builds and resolves the binary itself.
+- A popup is launched as a bare process, so herdr exports **none** of the plugin-pane environment for it. That is what `cbd1249` fixed and why `cmd/herdr-ssh/env.go` exists; see the correction in the findings above before adding any new `HERDR_*` read. `env.go` stays regardless — `connect` is a scriptable verb that also runs with none of those variables set.
 
 **`prefix+i` is verified free, and `prefix+r` is verified taken.** `herdr --default-config` (374 lines, the authoritative list of built-in bindings — the live config's own header points at it) binds these single letters: `b c e g h j k l n o p q r s v w x z`. `prefix+r` is among them, which is why the picker does not take it. The operator's config additionally binds `d e f m o t y` and several `shift`/`ctrl` combinations. `prefix+i` appears in neither list, leaving it and `prefix+u` as the only free single letters (`prefix` itself is `ctrl+a`). Re-check both lists before substituting a different key.
 
@@ -8005,14 +8005,23 @@ repo is public by then:
 
 - **"Once this repo is published, the shorter route works too"** — it is
   published; the conditional was describing a state that no longer held.
-- **The one documented binding was `type = "plugin_action"`, which docks.** The
-  README's own first line promises "a floating fuzzy picker", and that binding
-  does not produce one. Only `type = "popup"` floats. A reader following the
-  install section got a docked pane and no way to tell whether the plugin or
-  their config was at fault. Both bindings are documented now, each labelled
-  with what it actually does, and the popup form carries the bare-integer
-  `width`/`height` warning — `width = "94"` is a TOML parse error that stops
-  the whole config loading.
+- **The one documented binding was `type = "plugin_action"`, which docked.**
+  The README's own first line promises "a floating fuzzy picker", and at the
+  time that binding did not produce one. A reader following the install section
+  got a docked pane and no way to tell whether the plugin or their config was
+  at fault. The first fix documented both bindings side by side, each labelled
+  with what it did.
+
+  **That two-binding section was itself replaced, and the reason is the point
+  of the whole exercise.** Documenting the floating form meant documenting an
+  absolute path into a checkout, which is unfollowable by anyone who is not the
+  author — the README could describe a floating picker or an installable one,
+  not both. Moving the placement onto the manifest pane (`3dcee6b`) collapsed
+  the choice: `plugin_action` floats now, so the install section is one
+  five-line block with no paths in it, which is what a stranger can actually
+  use. The bare-integer `width`/`height` warning survived the collapse, moved
+  to the manifest where those keys now live — `width = "94"` is a TOML parse
+  error that stops the whole file loading, not a smaller window.
 
 The design intent the step was written to capture, which the file still has to
 satisfy, is below.
@@ -8281,26 +8290,44 @@ error field. Re-run the Task 20 smoke test against the installed copy — the
 build step runs on the install host, so a missing `go` toolchain shows up here
 and nowhere earlier.
 
-**Not run — this one needs the operator to say go, and it is the only step here
-that does.** Everything else in Task 21 either reads state or writes to GitHub.
-This sequence mutates the operator's live herdr: `unlink` drops the dev tree
-they are still developing in, and `install` replaces it with a GitHub copy under
-`~/.config/herdr/plugins/github/`. Two specifics worth knowing before choosing:
+**Run, and it passed.** `install` exited 0 and `plugin list` reported:
 
-- The `prefix+i` popup binding does **not** go through the plugin — it execs
-  `/Users/operator/DEVELOPMENT/herdr-plugin-ssh/bin/herdr-ssh` by absolute path. So
-  unlinking would not break the picker, and the swap would not exercise the
-  binding either. What it does exercise is the `plugin open-picker` action and
-  the manifest's `build` step.
+```json
+{
+  "source_kind": "github",
+  "root": "/Users/operator/.config/herdr/plugins/github/purehate.herdr-ssh-2104c31c4ee0",
+  "commit": "8cda0d65c7f04d717aadbefb59e7318df9fba106",
+  "has_error": false,
+  "picker": {
+    "id": "picker",
+    "title": "SSH Hosts",
+    "placement": "popup",
+    "width": 94,
+    "height": 28,
+    "command": ["./bin/herdr-ssh", "picker"]
+  }
+}
+```
+
+The thing this catches and nothing earlier does: the manifest's
+`go build -o bin/ ./cmd/herdr-ssh` runs on the _install host_, against a
+freshly-cloned tree with no `bin/` in it. It ran, and produced a 7,943,826-byte
+`bin/herdr-ssh` — so the toolchain and module resolution both work from a clean
+clone, not just from the dev tree. `herdr plugin action list` then showed
+`open-picker` registered against the installed copy, which is the half that
+proves the keybinding reaches it.
+
+Two things about the state this leaves behind:
+
+- The swap now exercises the `prefix+i` binding, where it would not have when
+  this step was written. The binding was `type = "popup"` with an absolute path
+  into the dev tree, which bypassed the plugin entirely; it is
+  `type = "plugin_action"` since the manifest took over the placement, so it
+  routes through whichever copy herdr has loaded.
 - It is reversible — `herdr plugin uninstall purehate.herdr-ssh` then
   `herdr plugin link ~/DEVELOPMENT/herdr-plugin-ssh` puts it back — but only
-  one copy of a given `plugin_id` loads at a time, so the dev link is inert for
-  as long as the installed copy is present.
-
-The thing it genuinely catches, and nothing earlier does: the manifest's
-`go build -o bin/ ./cmd/herdr-ssh` runs on the _install host_, against a
-freshly-cloned tree with no `bin/` in it. A toolchain or module problem that the
-dev tree papers over surfaces here first.
+  one copy of a given `plugin_id` loads at a time. **The dev tree is currently
+  unlinked**, so edits there do nothing until that swap is reversed.
 
 ---
 
@@ -8351,7 +8378,7 @@ byte-identical after both invocations, at `3577905575 1555` and
 - [x] `go run github.com/kisielk/errcheck@v1.20.0 ./...` — **exit 0, which is the entire pass condition.** Measured at `250914b` on a clean export and re-measured at `d643b6a`: exit 0, zero bytes on both streams. `errcheck: 0` here is a _passed prediction_, not merely a clean run — `9e9dc9b` threaded a writer through all seven `os.Stderr` diagnostic sites, which converts them from errcheck-excluded to errcheck-flagged, and landed the explicit `_, _ =` discards in the same commit.
 - [x] `go build -o bin/ ./cmd/herdr-ssh` — exit 0 and `bin/herdr-ssh` present. Measured at `250914b` on a clean export.
 - [x] `herdr plugin list --json | rg herdr-ssh` — plugin loads with no error field. Measured against the running 0.9.0 server: `{"plugin_id":"purehate.herdr-ssh","name":"SSH Picker","version":"0.1.0","enabled":true,"source_kind":"local","has_error":false}`. `has_error` is `has("error")` rather than a grep for the word — `rg herdr-ssh` matches the whole one-line JSON document for every plugin, so the plugin's own error field and a neighbour's are the same hit. `source_kind` is `local`: this is the linked dev tree, not the GitHub install, which is the separate check in Step 7.
-- [x] `prefix+i` opens the picker with real hosts from `~/.ssh/config` — operator-confirmed on screen. **"the overlay" is stale wording:** the binding that ships is `type = "popup"`, which is what renders a floating box; the `overlay` placement in `herdr-plugin.toml` docks and is the other entrypoint. Both exist, and this gate is about the popup.
+- [ ] `prefix+i` opens the picker with real hosts from `~/.ssh/config` — operator-confirmed on screen once, then **un-confirmed by a later change**, which is why this is back to unticked. **"the overlay" is stale wording, twice over.** It was written when the manifest's picker pane was `placement = "overlay"`, which docks; it was then confirmed against a `type = "popup"` keybinding, which floats but bypasses the plugin. The pane is `placement = "popup"` now and the binding is back to `plugin_action`, so this is one floating picker reached one way. **Needs re-confirming on screen against that binding** — the argv is asserted by `TestOpenPickerWritesCallerAndOpensThePopup`, and the manifest and `openPicker` are held in agreement by `TestTheManifestAndOpenPickerAgreeOnPlacement`, but no test can show that herdr floats the result.
 - [ ] `enter` lands at an ssh prompt in a new split — _unticked: needs the operator at the keyboard. Everything up to the exec is covered by `cmd/herdr-ssh` unit tests; what is not covered is herdr actually placing the split and ssh actually answering._
 - [ ] The session pane is labeled `ssh:<alias>` in `herdr pane list` — _unticked: depends on the gate above having been performed. Until a host is picked there is no pane to carry the label, and `pane list` currently reports no `ssh:` label for exactly that reason — absence here is not yet evidence of a defect._
 - [ ] Re-picking an open host focuses it; `^n` opens a second pane — _unticked: needs the operator at the keyboard._
