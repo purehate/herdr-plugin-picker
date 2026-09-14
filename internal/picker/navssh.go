@@ -55,6 +55,38 @@ func (m navigatorModel) latencyLabel(alias string) string {
 	}
 }
 
+// toggleMark flips the cursor host's mark and steps down, the way fzf's
+// multi-select does, so several hosts can be marked without moving the cursor
+// back to the keyboard.
+func (m navigatorModel) toggleMark() navigatorModel {
+	item, ok := m.cursorItem()
+	if !ok {
+		return m
+	}
+	if m.marked[item.ID] {
+		delete(m.marked, item.ID)
+	} else {
+		m.marked[item.ID] = true
+	}
+	return m.move(1)
+}
+
+// markedHosts returns the marked hosts in the ssh tab's order, or nil when
+// nothing is marked. It reads the full host list rather than the filtered rows,
+// so a mark survives a query that hides it.
+func (m navigatorModel) markedHosts() []NavItem {
+	if len(m.marked) == 0 {
+		return nil
+	}
+	out := make([]NavItem, 0, len(m.marked))
+	for _, item := range sshNavItems(m.opts.Hosts, "") {
+		if m.marked[item.ID] {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 // aliasColumnFor is the column every ssh row's detail half starts at, measured
 // from the widest alias loaded. Measured over the whole set rather than the rows
 // on screen, for the reason previewLabelWidth is a constant: an edge that moves
@@ -101,6 +133,9 @@ func (m navigatorModel) renderSSHRows(s styles, selected lipgloss.Style, start, 
 
 		base, dim, hit := s.text, s.muted, s.accent
 		pointer := frameIndent + "  "
+		if m.marked[h.Alias] {
+			pointer = frameIndent + s.accent.Render("▣ ")
+		}
 		if i == m.cursor {
 			// One style for the whole band: a muted detail or a green marker
 			// inside it would punch a hole in the highlight. The markers keep

@@ -143,6 +143,13 @@ Additional keys on the **ssh** tab:
 | `^z`        | ssh in a zoomed pane                 |
 | `^n`        | force a new pane even if one exists  |
 | `^o`        | toggle the host preview              |
+| `space`     | mark the host; Enter opens all marked |
+
+`space` marks a host and steps down, so several can be marked in a row. The
+footer shows the count, Enter opens them all with the chosen placement, and Esc
+clears the marks before it closes the picker. A mark is about the host, not the
+current filter, so a marked host opens even when a query hides its row. Space
+is only a mark key on the ssh tab; elsewhere it is an ordinary query character.
 
 Additional keys on the **agents** tab:
 

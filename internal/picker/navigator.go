@@ -141,7 +141,11 @@ type NavOptions struct {
 type NavSelection struct {
 	Section NavSection
 	Item    NavItem
-	// Placement and ForceNew apply only to NavSSH: how the chosen host opens.
+	// Marked, when non-empty, are the ssh hosts the operator marked with space
+	// and asked to open together. Item is still the cursor row, so a caller that
+	// ignores Marked keeps the single-selection behavior.
+	Marked []NavItem
+	// Placement and ForceNew apply only to NavSSH: how the chosen hosts open.
 	Placement string
 	ForceNew  bool
 }
@@ -161,7 +165,11 @@ type navigatorModel struct {
 	probed  map[string]bool
 	up      map[string]bool
 	latency map[string]time.Duration
-	chosen  *NavSelection
+	// marked is the ssh tab's multi-select set, keyed by alias. It is a map so
+	// writes are visible through every copy of the model that shares it, like
+	// probed and up above.
+	marked map[string]bool
+	chosen *NavSelection
 	// refreshErr is the last failed inventory read, kept so the footer can say
 	// the list on screen is stale rather than silently pretending it is current.
 	refreshErr error
@@ -215,6 +223,7 @@ func newNavigatorModel(o NavOptions) navigatorModel {
 		probed:  map[string]bool{},
 		up:      map[string]bool{},
 		latency: map[string]time.Duration{},
+		marked:  map[string]bool{},
 	}
 	return m.refilter()
 }
@@ -575,8 +584,20 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Mod&tea.ModCtrl != 0 {
 			return m.handleCtrl(msg)
 		}
+		// Space marks on the ssh tab. It is not a useful query character there —
+		// ssh aliases are whitespace-separated, so a space in the query can never
+		// match — which is what makes it safe to take for marking.
+		if m.section == NavSSH && msg.Code == tea.KeySpace {
+			return m.toggleMark(), nil
+		}
 		switch msg.Code {
 		case tea.KeyEsc:
+			// Esc clears marks before it closes, so a mistaken space does not cost
+			// the operator the popup.
+			if m.section == NavSSH && len(m.marked) > 0 {
+				m.marked = map[string]bool{}
+				return m, nil
+			}
 			return m, tea.Quit
 		case tea.KeyEnter:
 			return m.choose()
@@ -659,6 +680,7 @@ func (m navigatorModel) choose() (tea.Model, tea.Cmd) {
 	sel := NavSelection{Section: m.section, Item: m.items[m.cursor]}
 	if m.section == NavSSH {
 		sel.Placement = "split"
+		sel.Marked = m.markedHosts()
 	}
 	m.chosen = &sel
 	return m, tea.Quit
@@ -672,6 +694,7 @@ func (m navigatorModel) chooseSSH(placement string, forceNew bool) (tea.Model, t
 		return m, nil
 	}
 	sel := NavSelection{Section: NavSSH, Item: m.items[m.cursor], Placement: placement, ForceNew: forceNew}
+	sel.Marked = m.markedHosts()
 	m.chosen = &sel
 	return m, tea.Quit
 }
@@ -833,7 +856,10 @@ func (m navigatorModel) footerHints(s styles) string {
 	}
 	hints := "↑↓ select   ←→/tab section   ^u clear"
 	if m.section == NavSSH {
-		hints = "↑↓ select   ←→/tab section   ^o preview   ^u clear"
+		hints = "↑↓ select   ←→/tab section   ^o preview   space mark   ^u clear"
+	}
+	if m.section == NavSSH && len(m.marked) > 0 {
+		hints = fmt.Sprintf("%d marked   space toggle   ↵ open all   esc clear", len(m.marked))
 	}
 	if m.note != "" && (m.noteErr || m.noteFor == m.selectedItemID()) {
 		mark := "✓ "
@@ -859,8 +885,14 @@ func (m navigatorModel) footerActions(s styles, selected lipgloss.Style) string 
 		return frameIndent + selected.Render(" ↵ run ") + s.muted.Render("   esc cancel")
 	}
 	if m.section == NavSSH {
+		action := " ↵ split "
+		closeLabel := "esc close"
+		if len(m.marked) > 0 {
+			action = fmt.Sprintf(" ↵ open %d ", len(m.marked))
+			closeLabel = "esc clear"
+		}
 		return frameIndent + s.muted.Render("^t tab   ^z zoom   ^n new") +
-			"   " + selected.Render(" ↵ split ") + s.muted.Render("   esc close")
+			"   " + selected.Render(action) + s.muted.Render("   "+closeLabel)
 	}
 	actions := ""
 	if m.opts.Actions != nil {

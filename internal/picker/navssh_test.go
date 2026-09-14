@@ -329,3 +329,79 @@ func TestPreviewFieldsIncludeForwards(t *testing.T) {
 		t.Fatalf("LocalForward lines = %d, want both", count)
 	}
 }
+
+func TestSSHSpaceMarksAndEnterOpensAll(t *testing.T) {
+	m := sshModel(sshFixture())
+	m.width, m.height = 60, 24
+	m = navKey(m, tea.KeySpace, " ", 0) // mark web1, step down
+	if !m.marked["web1"] {
+		t.Fatal("space did not mark the cursor host")
+	}
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1 (stepped down after marking)", m.cursor)
+	}
+	m = navKey(m, tea.KeySpace, " ", 0) // mark db-primary
+	m = navKey(m, tea.KeyEnter, "", 0)
+	if m.chosen == nil || len(m.chosen.Marked) != 2 {
+		t.Fatalf("chosen = %+v", m.chosen)
+	}
+	if m.chosen.Marked[0].ID != "web1" || m.chosen.Marked[1].ID != "db-primary" {
+		t.Fatalf("marked = %+v", m.chosen.Marked)
+	}
+}
+
+func TestSSHEscClearsMarksBeforeClosing(t *testing.T) {
+	m := sshModel(sshFixture())
+	m = navKey(m, tea.KeySpace, " ", 0)
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	m = next.(navigatorModel)
+	if len(m.marked) != 0 {
+		t.Fatalf("esc left marks: %v", m.marked)
+	}
+	if cmd != nil {
+		t.Fatal("esc cleared marks but also quit")
+	}
+	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("esc with no marks did not close")
+	}
+}
+
+// A mark is a statement about a host, not about the current filter: typing a
+// query that hides the marked row must not silently drop it from the open.
+func TestMarkedHostsSurviveAQuery(t *testing.T) {
+	m := sshModel(sshFixture())
+	m = navKey(m, tea.KeySpace, " ", 0) // mark web1
+	for _, r := range "db" {
+		m = navKey(m, r, string(r), 0)
+	}
+	next, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = next.(navigatorModel)
+	if m.chosen == nil || len(m.chosen.Marked) != 1 || m.chosen.Marked[0].ID != "web1" {
+		t.Fatalf("chosen = %+v", m.chosen)
+	}
+}
+
+func TestSSHMarkedRowShowsTheMarkGlyph(t *testing.T) {
+	m := sshModel(sshFixture())
+	m.width, m.height = 60, 24
+	m = navKey(m, tea.KeySpace, " ", 0) // web1 marked, cursor on db-primary
+	if view := m.View().Content; !strings.Contains(view, "▣") {
+		t.Fatalf("mark glyph not drawn:\n%s", view)
+	}
+}
+
+// Space is a query character everywhere but the ssh tab, where it cannot match
+// an alias and is taken for marking instead.
+func TestSpaceStillFiltersOnOtherTabs(t *testing.T) {
+	o := navFixture()
+	o.Spaces = []NavItem{{ID: "w1", Label: "a b"}, {ID: "w2", Label: "ab"}}
+	m := newNavigatorModel(o)
+	m = navKey(m, tea.KeySpace, " ", 0)
+	if m.query != " " {
+		t.Fatalf("space did not reach the query on the spaces tab: %q", m.query)
+	}
+	if len(m.marked) != 0 {
+		t.Fatalf("space marked a row off the ssh tab: %v", m.marked)
+	}
+}

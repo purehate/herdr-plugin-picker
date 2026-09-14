@@ -141,6 +141,28 @@ func navigatorOptions(snapshot herdrapi.Snapshot, th theme.Theme, hosts []sshcon
 	}
 }
 
+// openHosts opens the marked hosts, or the cursor host when nothing is marked.
+// Every host is recorded, so a multi-open updates frecency for all of them. The
+// caller context is resolved once by the caller and reused: it is the pane the
+// picker was launched from, which does not move between opens.
+func openHosts(out io.Writer, api herdrapi.Client, cfg pluginconfig.Config, sel picker.NavSelection, ctx caller) error {
+	items := sel.Marked
+	if len(items) == 0 {
+		items = []picker.NavItem{sel.Item}
+	}
+	for _, item := range items {
+		recordHostUse(out, item.Host.Alias)
+		if err := performSelection(out, api, cfg, picker.Selection{
+			Host:      item.Host,
+			Placement: sel.Placement,
+			ForceNew:  sel.ForceNew,
+		}, ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func focusNavigatorSelection(api herdrapi.Client, sel picker.NavSelection) error {
 	switch sel.Section {
 	case picker.NavSpaces:
@@ -241,12 +263,7 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 		return nil
 	}
 	if sel.Section == picker.NavSSH {
-		recordHostUse(out, sel.Item.Host.Alias)
-		return performSelection(out, api, cfg, picker.Selection{
-			Host:      sel.Item.Host,
-			Placement: sel.Placement,
-			ForceNew:  sel.ForceNew,
-		}, resolveCaller(pickerCaller()))
+		return openHosts(out, api, cfg, sel, resolveCaller(pickerCaller()))
 	}
 	if err := focusNavigatorSelection(api, sel); err != nil {
 		_, _ = fmt.Fprintln(out)

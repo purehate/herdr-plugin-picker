@@ -8,6 +8,7 @@ import (
 
 	"github.com/purehate/herdr-plugin-picker/internal/herdrapi"
 	"github.com/purehate/herdr-plugin-picker/internal/picker"
+	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
 	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
 	"github.com/purehate/herdr-plugin-picker/internal/theme"
 )
@@ -73,6 +74,40 @@ func TestNavigatorLaunchAndManifestAgree(t *testing.T) {
 	}
 	if got := manifestOpenPlugin(t, calls); got != m.ID {
 		t.Fatalf("navigator plugin %q, manifest %q", got, m.ID)
+	}
+}
+
+// TestOpenHostsOpensEveryMarkedHost pins the multi-open: one session per marked
+// host, not just the cursor row.
+func TestOpenHostsOpensEveryMarkedHost(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	var calls [][]string
+	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
+		calls = append(calls, args)
+		return nil, nil
+	}}
+	cfg := pluginconfig.Defaults()
+	cfg.ReusePanes = false
+	sel := picker.NavSelection{
+		Section:   picker.NavSSH,
+		Item:      picker.NavItem{Host: sshconfig.Host{Alias: "web1"}},
+		Placement: "split",
+		Marked: []picker.NavItem{
+			{Host: sshconfig.Host{Alias: "web1"}},
+			{Host: sshconfig.Host{Alias: "db"}},
+		},
+	}
+	if err := openHosts(io.Discard, api, cfg, sel, caller{}); err != nil {
+		t.Fatal(err)
+	}
+	opens := 0
+	for _, c := range calls {
+		if len(c) > 0 && c[0] == "plugin" {
+			opens++
+		}
+	}
+	if opens != 2 {
+		t.Fatalf("plugin opens = %d, want 2 (calls %v)", opens, calls)
 	}
 }
 
