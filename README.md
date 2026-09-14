@@ -2,13 +2,15 @@
 
 [![ci](https://github.com/purehate/herdr-plugin-picker/actions/workflows/ci.yml/badge.svg)](https://github.com/purehate/herdr-plugin-picker/actions/workflows/ci.yml)
 
-One floating fuzzy picker over Herdr spaces, agents, open tabs, and the hosts in
-your `~/.ssh/config`. The first three jump you to something already running; the
-`ssh` tab opens a session in a new pane, tab, or zoomed pane. Modeled on tmux's
-`sesh` picker and Herdr's own settings dialog.
+One floating fuzzy picker over Herdr spaces, agents, open tabs, panes, and the
+hosts in your `~/.ssh/config`. The first four jump you to something already
+running; the `ssh` tab opens a session in a new pane, tab, or zoomed pane; the
+`panes` tab also broadcasts one command to every pane you mark. Modeled on
+tmux's `sesh` picker, `setw synchronize-panes`, and Herdr's own settings
+dialog.
 
 ```
-   spaces  agents  sessions  ssh
+   spaces  agents  sessions  panes  ssh
   ──────────────────────────────────────────────────────────────────────────────────────────
   / ▏
 
@@ -59,7 +61,7 @@ goto = "prefix+shift+j"
 key = "prefix+g"
 type = "plugin_action"
 command = "purehate.herdr-picker.open-navigator"
-description = "spaces, agents, sessions, ssh"
+description = "spaces, agents, sessions, panes, ssh"
 ```
 
 That is the whole binding — no paths, nothing machine-specific. The floating
@@ -84,9 +86,11 @@ switching tabs clears the query.
   one-line prompt to send it a message.
 - **sessions** lists the open tabs in the current Herdr server. Here
   "sessions" means tabs, not separate named Herdr servers.
+- **panes** lists every pane across every workspace, with what is running in it
+  and where. `space` marks panes and `^b` sends one command to all of them.
 - **ssh** lists the hosts in `~/.ssh/config` and opens one.
 
-On the first three, Enter jumps to the selected workspace, agent, or tab. The
+On the first four, Enter jumps to the selected workspace, agent, tab, or pane. The
 inventory re-reads `herdr api snapshot` about once a second while the popup is
 open, so newly created spaces, agents, and tabs appear without reopening it;
 the cursor stays on the row it was on and the query is kept. Blocked agents
@@ -99,9 +103,9 @@ The preview reads `herdr agent read`; a prompt goes through `herdr agent
 prompt`, which herdr refuses for an already-blocked agent rather than sending
 input. Neither reads the agent's session file.
 
-It reads only the metadata in `herdr api snapshot` and invokes Herdr's own
-workspace, agent, or tab focus command; it does not create panes on the first
-three tabs.
+It reads only the metadata in `herdr api snapshot` and `herdr pane list`, and
+invokes Herdr's own workspace, agent, tab, or pane focus command; it does not
+create panes on the first four tabs.
 
 On **ssh**, Enter opens a session in a split, `^t` in a new tab, `^z` in a
 zoomed pane, and `^n` forces a new pane even when a session for that host is
@@ -133,6 +137,7 @@ On every tab:
 | `←` / `→`, Tab         | change tab                           |
 | `enter`                | jump to the row, or ssh in a split   |
 | `^x`                   | row actions (not on the ssh tab)     |
+| `space`                | mark the row (panes and ssh tabs)    |
 | `esc`, `^c`            | close                                |
 
 Additional keys on the **ssh** tab:
@@ -150,6 +155,26 @@ footer shows the count, Enter opens them all with the chosen placement, and Esc
 clears the marks before it closes the picker. A mark is about the host, not the
 current filter, so a marked host opens even when a query hides its row. Space
 is only a mark key on the ssh tab; elsewhere it is an ordinary query character.
+
+Additional keys on the **panes** tab:
+
+| Key     | Action                                       |
+| ------- | -------------------------------------------- |
+| `space` | mark the pane                                |
+| `^a`    | mark every listed pane; again to clear       |
+| `^b`    | send one command to every marked pane        |
+
+`^b` opens a one-line input. Enter asks `y`/`n` naming the command and the pane
+count, and only `y` sends it — it is many writes to live shells and nothing
+undoes them. With nothing marked, `^b` targets the row under the cursor. `^a` is
+bounded by the query, so filtering is how you narrow a broadcast. The picker's
+own popup pane is never listed, so a broadcast cannot type into the picker.
+
+This needs `$HERDR_SOCKET_PATH`, which herdr sets for its plugins. The command
+goes over herdr's socket API as `pane.send_text`, because that is the only
+operation that writes to a plain shell — the CLI's `agent send-keys` reaches
+agents only. Without the socket, `^b` does nothing rather than failing once per
+pane after you have confirmed.
 
 Additional keys on the **agents** tab:
 
@@ -186,6 +211,18 @@ receive it. The result appears in the footer, and the live refresh picks up a
 rename or a close on its next tick.
 
 ## Markers
+
+The **panes** tab's first column, per pane:
+
+| Marker  | Meaning                                       |
+| ------- | --------------------------------------------- |
+| ▪       | the pane you are in                           |
+| ◉       | an agent waiting on you                       |
+| ●       | an agent working                              |
+| ○       | an agent idle or done                         |
+| (blank) | a plain shell                                 |
+
+A marked pane is shown with `▣` to the left of the row.
 
 The **ssh** tab's first column, per host:
 
@@ -335,21 +372,31 @@ alias, in a pane herdr opens for it. Your config, your keys, your agent, your
 `known_hosts`, your proxy settings. If a host works by hand it works here, and
 failures read the same too.
 
-**Talks to herdr only through `$HERDR_BIN_PATH`** — snapshot, focus, rename,
-close, and create workspaces, tabs, and panes; worktree open; and read or prompt
-agents. There is no network client, no telemetry, and no other process it
-starts. While the picker is open it re-runs `herdr api snapshot` about once a
-second, so that one subprocess starts repeatedly for as long as the popup is on
+**Talks to herdr, and to nothing else.** Almost all of it goes through
+`$HERDR_BIN_PATH` — snapshot, pane list, focus, rename, close, and create
+workspaces, tabs, and panes; worktree open; and read or prompt agents. There is
+no network client, no telemetry, and no other process it starts. While the
+picker is open it re-runs `herdr api snapshot` and `herdr pane list` about once
+a second, so those subprocesses start repeatedly for as long as the popup is on
 screen; closing the popup stops it. The agents tab preview runs `herdr agent
 read` for the selected agent, and `^p` submits text with `herdr agent prompt` —
 so pressing Enter in the prompt sends that text to the agent you selected. `^x`
 can rename or close what is on screen and open tabs, workspaces, and worktrees,
 all through herdr.
 
+**One thing does not go through the CLI: `^b`.** Broadcast connects to herdr's
+own unix socket at `$HERDR_SOCKET_PATH` and calls `pane.send_text`, because no
+CLI command writes to a plain shell — `agent send-keys` reaches agents only.
+That socket is herdr's, set by herdr for its own plugins; the picker dials it,
+writes one JSON line per pane, reads one line back, and closes. It is the only
+socket in the plugin besides the reachability probe, and the only place the
+picker writes into a pane you did not ask it to open. Nothing is sent without
+the `y`/`n` you answer first.
+
 Three direct dependencies, all Charm/TOML libraries, listed under
 [Development](#development). If you would rather read the code than this
-section, `internal/sshconfig` is the parser and `internal/probe` is the only
-thing that touches a socket.
+section, `internal/sshconfig` is the parser, and `internal/probe` and
+`internal/herdrsock` are the only things that touch a socket.
 
 ## Development
 

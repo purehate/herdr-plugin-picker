@@ -97,6 +97,9 @@ func navigatorEnv(t *testing.T, home string) {
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", "")
 	t.Setenv("HERDR_CONFIG_PATH", "")
 	t.Setenv("HERDR_PANE_ID", "")
+	// Cleared because these tests are run from inside herdr as often as not,
+	// and an inherited socket path would wire ^b to the operator's live panes.
+	t.Setenv("HERDR_SOCKET_PATH", "")
 }
 
 // TestRunNavigatorBuildsTheFooterWarningsInAFixedOrder breaks the plugin config,
@@ -293,44 +296,40 @@ func TestALoadWarningNamesItsSourceOnce(t *testing.T) {
 	}
 }
 
-// TestRunNavigatorListsPanesOnlyWhenReuseIsOn ties the ▪ marker's input to the
+// TestRunNavigatorMarksPanesOnlyWhenReuseIsOn ties the ▪ marker's input to the
 // one config key that can make the marker true. OpenPanes has exactly two
 // effects — it paints ▪, and ▪ outranks the ●/○ reachability glyphs — and with
 // reuse_panes = false both are wrong: enter opens a second pane to a host the
 // marker says already has one, and the glyph it hid was the accurate one.
 //
-// Both halves are asserted because either alone is satisfiable by the wrong
-// change. The call log alone would still pass if OpenPanes were later filled
-// from a cache instead of a list; OpenPanes alone would still pass on a list
-// that is fetched and then dropped, which pays the subprocess and the JSON
-// decode on the path that runs before the first frame renders.
-//
-// The reuse-on row is what makes the reuse-off row mean anything: it proves the
-// fixture produces a pane worth marking and that this seam records the call at
-// all, so the empty log opposite it is a suppressed round-trip rather than a
-// harness that never observed one.
-func TestRunNavigatorListsPanesOnlyWhenReuseIsOn(t *testing.T) {
+// The call log is asserted alongside it, and is identical in both rows on
+// purpose. The panes tab needs the inventory unconditionally, so reuse_panes no
+// longer decides whether `pane list` runs — only what is done with the result.
+// Pinning the log to one list proves the two consumers share that read: a
+// second one would be a subprocess and a JSON decode on the path that runs
+// before the first frame renders, for an answer already in hand.
+func TestRunNavigatorMarksPanesOnlyWhenReuseIsOn(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		// probe = false keeps the run hermetic. Probing puts a SYN on the wire
 		// per host, and this test is about a herdr round-trip, not a network.
 		body string
 		// The whole herdr call log, not just whether "pane list" is in it. The
-		// snapshot is unconditional; the pane list is the only other call this
-		// path can make, because the operator cancels and HERDR_PANE_ID is empty.
+		// snapshot and the pane list are the only calls this path can make,
+		// because the operator cancels and HERDR_PANE_ID is empty.
 		wantCalls string
 		wantPanes int
 	}{
 		{
-			name:      "reuse on lists and marks",
+			name:      "reuse on marks",
 			body:      "probe = false\nreuse_panes = true\n",
 			wantCalls: "api snapshot | pane list",
 			wantPanes: 1,
 		},
 		{
-			name:      "reuse off neither lists nor marks",
+			name:      "reuse off does not mark",
 			body:      "probe = false\nreuse_panes = false\n",
-			wantCalls: "api snapshot",
+			wantCalls: "api snapshot | pane list",
 			wantPanes: 0,
 		},
 	} {
@@ -357,10 +356,9 @@ func TestRunNavigatorListsPanesOnlyWhenReuseIsOn(t *testing.T) {
 			if got := len(opts.OpenPanes); got != tc.wantPanes {
 				t.Fatalf("OpenPanes = %v, want %d entries", opts.OpenPanes, tc.wantPanes)
 			}
-			// Suppressing the list must stay silent. openSessions prints
-			// "could not list panes" when a list fails, and a gate written as a
-			// forced failure rather than a skipped call would put that line
-			// above every picker run with reuse off.
+			// A successful list must stay silent. The pane read prints "could
+			// not list panes" when it fails, and that line above a working
+			// picker would be the first thing the operator sees.
 			wantQuiet(t, screen.String())
 		})
 	}

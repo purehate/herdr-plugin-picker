@@ -93,12 +93,19 @@ func livePaneID(panes []herdrapi.Pane, id string) string {
 // openSessions maps alias → pane id for every live ssh session, so the picker
 // can mark them.
 func openSessions(out io.Writer, api herdrapi.Client) map[string]string {
-	sessions := map[string]string{}
 	panes, err := api.PaneList()
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "herdr-picker: could not list panes: %v\n", err)
-		return sessions
+		return map[string]string{}
 	}
+	return sessionsFrom(panes)
+}
+
+// sessionsFrom is the same mapping over an inventory already in hand, for the
+// navigator: it reads the pane list once for its panes tab, and a second
+// `pane list` for the same answer is a subprocess the popup does not need.
+func sessionsFrom(panes []herdrapi.Pane) map[string]string {
+	sessions := map[string]string{}
 	for _, p := range panes {
 		if p.Label == nil {
 			continue

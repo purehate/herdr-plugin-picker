@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/purehate/herdr-plugin-picker/internal/herdrapi"
+	"github.com/purehate/herdr-plugin-picker/internal/herdrsock"
 	"github.com/purehate/herdr-plugin-picker/internal/picker"
 	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
 	"github.com/purehate/herdr-plugin-picker/internal/probe"
@@ -64,10 +65,12 @@ func countLabel(n int, singular string) string {
 	return fmt.Sprintf("%d %ss", n, singular)
 }
 
-// navItems builds the three server-backed lists the picker shows. It is kept
-// separate from navigatorOptions so the live-refresh tick can rebuild them from
-// a fresh snapshot without re-reading the disk-backed hosts or the warnings.
-func navItems(snapshot herdrapi.Snapshot) picker.NavRefresh {
+// navItems builds the server-backed lists the picker shows. It is kept separate
+// from navigatorOptions so the live-refresh tick can rebuild them from a fresh
+// read without re-reading the disk-backed hosts or the warnings. panes comes
+// from a second herdr call because the snapshot carries no pane inventory;
+// selfPane is this process's own pane, which navPaneItems drops.
+func navItems(snapshot herdrapi.Snapshot, panes []herdrapi.Pane, selfPane string) picker.NavRefresh {
 	spaceLabels := make(map[string]string, len(snapshot.Workspaces))
 	spaces := make([]picker.NavItem, 0, len(snapshot.Workspaces))
 	for _, w := range snapshot.Workspaces {
@@ -109,7 +112,12 @@ func navItems(snapshot herdrapi.Snapshot) picker.NavRefresh {
 			WorkspaceID: t.WorkspaceID,
 		})
 	}
-	return picker.NavRefresh{Spaces: spaces, Agents: agents, Sessions: sessions}
+	return picker.NavRefresh{
+		Spaces:   spaces,
+		Agents:   agents,
+		Sessions: sessions,
+		Panes:    navPaneItems(panes, spaceLabels, selfPane),
+	}
 }
 
 // blockedFirst orders agents so the ones waiting on the operator sort above the
@@ -130,14 +138,15 @@ func agentBlockedRank(status string) int {
 	return 1
 }
 
-func navigatorOptions(snapshot herdrapi.Snapshot, th theme.Theme, hosts []sshconfig.Host) picker.NavOptions {
-	items := navItems(snapshot)
+func navigatorOptions(snapshot herdrapi.Snapshot, th theme.Theme, hosts []sshconfig.Host, panes []herdrapi.Pane, selfPane string) picker.NavOptions {
+	items := navItems(snapshot, panes, selfPane)
 	return picker.NavOptions{
 		Theme:    th,
 		Hosts:    hosts,
 		Spaces:   items.Spaces,
 		Agents:   items.Agents,
 		Sessions: items.Sessions,
+		Panes:    items.Panes,
 	}
 }
 
@@ -163,7 +172,10 @@ func openHosts(out io.Writer, api herdrapi.Client, cfg pluginconfig.Config, sel 
 	return nil
 }
 
-func focusNavigatorSelection(api herdrapi.Client, sel picker.NavSelection) error {
+// focusNavigatorSelection moves the operator to the chosen row. ctx is the pane
+// the picker was launched from, which is what makes a pane jump skip the
+// workspace and tab steps it is already in.
+func focusNavigatorSelection(api herdrapi.Client, sel picker.NavSelection, ctx caller) error {
 	switch sel.Section {
 	case picker.NavSpaces:
 		return api.FocusWorkspace(sel.Item.ID)
@@ -171,6 +183,12 @@ func focusNavigatorSelection(api herdrapi.Client, sel picker.NavSelection) error
 		return api.FocusAgent(sel.Item.ID)
 	case picker.NavSessions:
 		return api.FocusTab(sel.Item.ID)
+	case picker.NavPanes:
+		return api.FocusPane(herdrapi.Pane{
+			PaneID:      sel.Item.ID,
+			TabID:       sel.Item.TabID,
+			WorkspaceID: sel.Item.WorkspaceID,
+		}, ctx.WorkspaceID, ctx.TabID)
 	default:
 		return fmt.Errorf("unknown navigator section %d", sel.Section)
 	}
@@ -193,6 +211,15 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	if err != nil {
 		return fatalInPane(out, in, err)
 	}
+	// One pane read serves both the panes tab and the ssh tab's ▪ markers. A
+	// failure is not fatal: the other four tabs are still worth showing, the
+	// panes tab opens empty, and the first refresh tick either fills it or flags
+	// the footer — where every other stale-inventory case lands.
+	panes, paneErr := api.PaneList()
+	if paneErr != nil {
+		_, _ = fmt.Fprintf(out, "herdr-picker: could not list panes: %v\n", paneErr)
+	}
+	selfPane := currentCaller().PaneID
 	hosts, warnings := loadHosts(sshConfigPath(), cfg)
 	// Pins and frecency reorder the ssh tab only. Rank keeps this order for ties,
 	// so a query still decides while typing and usage breaks the draws.
@@ -211,7 +238,7 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	}
 	warnings = append(loadWarnings, warnings...)
 
-	opts := navigatorOptions(snapshot, th, hosts)
+	opts := navigatorOptions(snapshot, th, hosts, panes, selfPane)
 	opts.ShowPreview = cfg.ShowPreview
 	opts.Warnings = warnings
 	// The inventory on screen drifts the moment it is read — agents block and
@@ -222,7 +249,19 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 		if err != nil {
 			return picker.NavRefresh{}, err
 		}
-		return navItems(fresh), nil
+		freshPanes, err := api.PaneList()
+		if err != nil {
+			return picker.NavRefresh{}, err
+		}
+		return navItems(fresh, freshPanes, selfPane), nil
+	}
+	// ^b is opt-in by presence, like the agent callbacks above. Without the
+	// socket there is no way to type into a plain shell, so the key stays dead
+	// rather than failing once per pane after the operator has committed.
+	if sock := herdrsock.New(); sock.Available() {
+		opts.Broadcast = func(paneIDs []string, text string) (string, error) {
+			return broadcastText(sock, paneIDs, text)
+		}
 	}
 	// The agents tab previews the selected agent's output and ^p prompts it.
 	// Both are opt-in by presence: a nil callback hides the affordance.
@@ -246,7 +285,7 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	// standalone picker gated it: the ▪ marker promises enter focuses the
 	// existing session, a promise only the reuse branch can keep.
 	if cfg.ReusePanes {
-		opts.OpenPanes = openSessions(out, api)
+		opts.OpenPanes = sessionsFrom(panes)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -265,7 +304,7 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	if sel.Section == picker.NavSSH {
 		return openHosts(out, api, cfg, sel, resolveCaller(pickerCaller()))
 	}
-	if err := focusNavigatorSelection(api, sel); err != nil {
+	if err := focusNavigatorSelection(api, sel, resolveCaller(pickerCaller())); err != nil {
 		_, _ = fmt.Fprintln(out)
 		return fatalInPane(out, in, err)
 	}

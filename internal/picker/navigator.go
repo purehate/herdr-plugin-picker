@@ -21,11 +21,12 @@ const (
 	NavSpaces NavSection = iota
 	NavAgents
 	NavSessions
+	NavPanes
 	NavSSH
 	navSectionCount
 )
 
-var navNames = [...]string{"spaces", "agents", "sessions", "ssh"}
+var navNames = [...]string{"spaces", "agents", "sessions", "panes", "ssh"}
 
 const (
 	navJumpLabel  = " ↵ jump "
@@ -73,11 +74,17 @@ type NavItem struct {
 	AliasPos    []int
 	HostNamePos []int
 
-	// WorkspaceID and CWD are the owning workspace and working directory, for
-	// the ^x actions that need them: a new tab in the same workspace, or opening
-	// the worktree the agent runs in. Both are empty on tabs and spaces.
+	// WorkspaceID, TabID and CWD are the row's place in herdr and its working
+	// directory, for the callers that need them: a new tab in the same
+	// workspace, opening the worktree an agent runs in, or walking to a pane,
+	// which herdr only reaches through its workspace and tab.
 	WorkspaceID string
+	TabID       string
 	CWD         string
+
+	// Status is the agent state herdr reports for a pane, and "" for a pane
+	// running a plain shell. The panes tab draws it as the row's marker.
+	Status string
 }
 
 // NavRefresh is the set of server-backed lists the picker rebuilds on each
@@ -87,6 +94,7 @@ type NavRefresh struct {
 	Spaces   []NavItem
 	Agents   []NavItem
 	Sessions []NavItem
+	Panes    []NavItem
 }
 
 type NavOptions struct {
@@ -94,6 +102,14 @@ type NavOptions struct {
 	Spaces   []NavItem
 	Agents   []NavItem
 	Sessions []NavItem
+	Panes    []NavItem
+
+	// Broadcast sends text to every pane id, and returns a short status line for
+	// the footer. nil disables the panes tab's ^b. The text arrives exactly as
+	// the operator typed it: appending the newline that submits it is the
+	// implementation's job, because whether a broadcast runs or only stages a
+	// command is a decision about shells, not about the picker.
+	Broadcast func(paneIDs []string, text string) (string, error)
 
 	// Refresh re-reads the server inventory for a live picker. When set, the
 	// picker re-runs it every RefreshInterval and swaps in the new lists,
@@ -165,9 +181,9 @@ type navigatorModel struct {
 	probed  map[string]bool
 	up      map[string]bool
 	latency map[string]time.Duration
-	// marked is the ssh tab's multi-select set, keyed by alias. It is a map so
-	// writes are visible through every copy of the model that shares it, like
-	// probed and up above.
+	// marked is the multi-select set for the ssh and panes tabs, keyed by alias
+	// or pane id. It is a map so writes are visible through every copy of the
+	// model that shares it, like probed and up above.
 	marked map[string]bool
 	chosen *NavSelection
 	// refreshErr is the last failed inventory read, kept so the footer can say
@@ -201,12 +217,14 @@ type navigatorModel struct {
 	inputSection NavSection
 
 	// confirmOpen is an action awaiting a y/n, captured with the row it applies
-	// to. confirmQuestion is what the footer asks.
+	// to. confirmQuestion is what the footer asks, and confirmText the command a
+	// broadcast will send once it is answered.
 	confirmOpen     bool
 	confirmAction   NavAction
 	confirmItem     NavItem
 	confirmSection  NavSection
 	confirmQuestion string
+	confirmText     string
 
 	// note is the last prompt or action outcome, scoped to noteFor so it is not
 	// shown under a different row. noteErr selects the warning styling and keeps
@@ -236,6 +254,8 @@ func (m navigatorModel) source() []NavItem {
 		return m.opts.Agents
 	case NavSessions:
 		return m.opts.Sessions
+	case NavPanes:
+		return m.opts.Panes
 	default:
 		return sshNavItems(m.opts.Hosts, "")
 	}
@@ -324,7 +344,7 @@ func (m navigatorModel) applyRefresh(r NavRefresh) navigatorModel {
 	if m.cursor >= 0 && m.cursor < len(m.items) {
 		prevID = m.items[m.cursor].ID
 	}
-	m.opts.Spaces, m.opts.Agents, m.opts.Sessions = r.Spaces, r.Agents, r.Sessions
+	m.opts.Spaces, m.opts.Agents, m.opts.Sessions, m.opts.Panes = r.Spaces, r.Agents, r.Sessions, r.Panes
 	return m.refilterKeeping(prevID)
 }
 
@@ -347,7 +367,8 @@ func (m navigatorModel) refilterKeeping(id string) navigatorModel {
 func navRefreshChanged(o NavOptions, r NavRefresh) bool {
 	return !navItemsEqual(o.Spaces, r.Spaces) ||
 		!navItemsEqual(o.Agents, r.Agents) ||
-		!navItemsEqual(o.Sessions, r.Sessions)
+		!navItemsEqual(o.Sessions, r.Sessions) ||
+		!navItemsEqual(o.Panes, r.Panes)
 }
 
 // navItemsEqual compares the fields the three server-backed lists populate.
@@ -360,7 +381,7 @@ func navItemsEqual(a, b []NavItem) bool {
 	for i := range a {
 		if a[i].ID != b[i].ID || a[i].Label != b[i].Label ||
 			a[i].Detail != b[i].Detail || a[i].Search != b[i].Search ||
-			a[i].Current != b[i].Current {
+			a[i].Current != b[i].Current || a[i].Status != b[i].Status {
 			return false
 		}
 	}
@@ -541,9 +562,7 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				right := left + len(name) + 2
 				if x >= left && x < right {
 					if m.section != NavSection(i) {
-						m.section = NavSection(i)
-						m.query = ""
-						return m.refilter(), nil
+						return m.setSection(NavSection(i)), nil
 					}
 					return m, nil
 				}
@@ -584,17 +603,19 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Mod&tea.ModCtrl != 0 {
 			return m.handleCtrl(msg)
 		}
-		// Space marks on the ssh tab. It is not a useful query character there —
-		// ssh aliases are whitespace-separated, so a space in the query can never
-		// match — which is what makes it safe to take for marking.
-		if m.section == NavSSH && msg.Code == tea.KeySpace {
+		// Space marks on the two tabs that act on a set. On ssh it costs nothing:
+		// aliases are whitespace-separated, so a space in the query could never
+		// match. On panes it costs a little — a pane title can contain spaces —
+		// but the ranker matches scattered runes, so the row is still reachable by
+		// typing through the gap, and marking is what the tab is for.
+		if m.marksRows() && msg.Code == tea.KeySpace {
 			return m.toggleMark(), nil
 		}
 		switch msg.Code {
 		case tea.KeyEsc:
 			// Esc clears marks before it closes, so a mistaken space does not cost
 			// the operator the popup.
-			if m.section == NavSSH && len(m.marked) > 0 {
+			if m.marksRows() && len(m.marked) > 0 {
 				m.marked = map[string]bool{}
 				return m, nil
 			}
@@ -654,12 +675,22 @@ func (m navigatorModel) handleCtrl(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.chooseSSH("zoomed", false)
 	case 'n':
 		return m.chooseSSH("split", true)
+	case 'a':
+		return m.markAllListed(), nil
+	case 'b':
+		return m.openBroadcastInput()
 	case 'p':
 		return m.openPromptInput()
 	case 'x':
 		return m.openMenu()
 	}
 	return m, nil
+}
+
+// marksRows reports whether the active tab uses space to build a set. Both tabs
+// that do act on several rows at once: ssh opens them, panes writes to them.
+func (m navigatorModel) marksRows() bool {
+	return m.section == NavSSH || m.section == NavPanes
 }
 
 func (m navigatorModel) promptCmd(target, text string) tea.Cmd {
@@ -751,8 +782,17 @@ func (m navigatorModel) move(delta int) navigatorModel {
 }
 
 func (m navigatorModel) switchSection(delta int) navigatorModel {
-	m.section = (m.section + NavSection(delta) + navSectionCount) % navSectionCount
+	return m.setSection((m.section + NavSection(delta) + navSectionCount) % navSectionCount)
+}
+
+// setSection moves to a tab and clears the query and the marks. Marks are
+// dropped because they mean different things per tab — hosts to open, panes to
+// write to — and carrying them across would let one tab's verb act on a set the
+// operator built for the other.
+func (m navigatorModel) setSection(s NavSection) navigatorModel {
+	m.section = s
 	m.query = ""
+	m.marked = map[string]bool{}
 	return m.refilter()
 }
 
@@ -785,6 +825,8 @@ func (m navigatorModel) View() tea.View {
 		lines = append(lines, frameIndent+s.muted.Render(m.emptyMessage()))
 	case m.section == NavSSH:
 		lines = append(lines, m.renderSSHRows(s, selected, start, rows, w)...)
+	case m.section == NavPanes:
+		lines = append(lines, m.renderPaneRows(s, selected, start, rows, w)...)
 	default:
 		for i := start; i < len(m.items) && i < start+rows; i++ {
 			item := m.items[i]
@@ -855,11 +897,18 @@ func (m navigatorModel) footerHints(s styles) string {
 		return frameIndent + s.muted.Render("↵ send   esc cancel")
 	}
 	hints := "↑↓ select   ←→/tab section   ^u clear"
-	if m.section == NavSSH {
+	switch m.section {
+	case NavSSH:
 		hints = "↑↓ select   ←→/tab section   ^o preview   space mark   ^u clear"
+	case NavPanes:
+		hints = "↑↓ select   ←→/tab section   space mark   ^a all   ^u clear"
 	}
-	if m.section == NavSSH && len(m.marked) > 0 {
-		hints = fmt.Sprintf("%d marked   space toggle   ↵ open all   esc clear", len(m.marked))
+	if m.marksRows() && len(m.marked) > 0 {
+		verb := "↵ open all"
+		if m.section == NavPanes {
+			verb = "^b broadcast"
+		}
+		hints = fmt.Sprintf("%d marked   space toggle   %s   esc clear", len(m.marked), verb)
 	}
 	if m.note != "" && (m.noteErr || m.noteFor == m.selectedItemID()) {
 		mark := "✓ "
@@ -897,6 +946,14 @@ func (m navigatorModel) footerActions(s styles, selected lipgloss.Style) string 
 	actions := ""
 	if m.opts.Actions != nil {
 		actions = s.muted.Render("^x actions") + "   "
+	}
+	if m.section == NavPanes && m.opts.Broadcast != nil {
+		label := "^b broadcast"
+		if n := len(m.marked); n > 0 {
+			label = fmt.Sprintf("^b broadcast %d", n)
+		}
+		return frameIndent + actions + s.muted.Render(label) + "   " +
+			selected.Render(navJumpLabel) + s.muted.Render("   "+navCloseLabel)
 	}
 	if m.section == NavAgents && m.opts.AgentPrompt != nil {
 		return frameIndent + actions + s.muted.Render("^p prompt") + "   " +

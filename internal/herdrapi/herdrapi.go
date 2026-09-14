@@ -63,6 +63,26 @@ type Pane struct {
 	TabID       string  `json:"tab_id"`
 	WorkspaceID string  `json:"workspace_id"`
 	Label       *string `json:"label"`
+
+	// The rest is what the panes tab draws. All display-only: nothing here
+	// selects a pane or changes what a row does.
+	Agent         string `json:"agent"`
+	Status        string `json:"agent_status"`
+	Title         string `json:"terminal_title_stripped"`
+	CWD           string `json:"cwd"`
+	ForegroundCWD string `json:"foreground_cwd"`
+	Focused       bool   `json:"focused"`
+}
+
+// Dir is the directory a command typed into this pane would run in. herdr
+// reports the launch directory and the foreground process's directory
+// separately, and they diverge the moment someone cd's — the second one is the
+// honest answer, so it wins when present.
+func (p Pane) Dir() string {
+	if p.ForegroundCWD != "" {
+		return p.ForegroundCWD
+	}
+	return p.CWD
 }
 
 type envelope struct {

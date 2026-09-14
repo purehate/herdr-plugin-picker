@@ -136,6 +136,9 @@ func (m navigatorModel) confirmKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		item := m.confirmItem
 		section := m.confirmSection
 		m.confirmOpen = false
+		if action.ID == broadcastAction {
+			return m, m.broadcastCmd(m.confirmText)
+		}
 		return m, m.actionCmd(section, item, action.ID, "")
 	case "n", "N":
 		m.confirmOpen = false
@@ -188,6 +191,9 @@ func (m navigatorModel) submitInput() (tea.Model, tea.Cmd) {
 	m.inputOpen = false
 	if text == "" {
 		return m, nil
+	}
+	if action == broadcastAction {
+		return m.confirmBroadcast(text)
 	}
 	if action == "" {
 		m.note = "sending…"
