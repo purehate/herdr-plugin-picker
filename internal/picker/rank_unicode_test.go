@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
 )
 
 // assertMatchedRunes checks pos against the ORIGINAL, un-lowercased string —

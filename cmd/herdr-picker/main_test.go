@@ -4,15 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/herdrapi"
-	"github.com/purehate/herdr-plugin-ssh/internal/picker"
+	"github.com/purehate/herdr-plugin-picker/internal/picker"
 )
 
 // wantDiagnostics asserts that each want appears in got, in the order listed.
@@ -69,166 +67,13 @@ func TestRunRejectsUnknownVerbs(t *testing.T) {
 	}
 }
 
-func TestOpenPickerForwardsCallerAndOpensThePopup(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", dir)
-	t.Setenv("HERDR_PANE_ID", "w5:pA")
-	t.Setenv("HERDR_TAB_ID", "w5:t1")
-	t.Setenv("HERDR_WORKSPACE_ID", "w5")
-
-	var calls [][]string
-	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
-		calls = append(calls, args)
-		return []byte(`{"id":1,"result":{}}`), nil
-	}}
-
-	if err := openPicker(api); err != nil {
-		t.Fatalf("openPicker: %v", err)
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read state dir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("openPicker wrote shared state files: %v", entries)
-	}
-	want := "plugin pane open --plugin purehate.herdr-ssh --entrypoint picker --placement popup " +
-		"--env HERDR_SSH_CALLER_PANE_ID=w5:pA --env HERDR_SSH_CALLER_TAB_ID=w5:t1 " +
-		"--env HERDR_SSH_CALLER_WORKSPACE_ID=w5 --focus"
-	if len(calls) != 1 || strings.Join(calls[0], " ") != want {
-		t.Fatalf("argv = %v, want %q", joined(calls), want)
-	}
-}
-
-// TestTheManifestAndOpenPickerAgreeOnPlacement reads the shipped manifest
-// rather than restating it.
-//
-// Two places carry the picker's placement, and they are read on different
-// paths: the manifest's is what a `plugin_action` keybinding gets, and
-// openPicker's is what an explicit `plugin pane open` gets. Drift between them
-// does not fail anything — it makes the picker float or dock depending on how
-// it was invoked, which is a bug report from a stranger rather than a red test.
-//
-// Parsed out of the file with a scanner instead of a TOML decoder because the
-// module has three direct dependencies and this is not worth a fourth. The
-// scan is anchored to the `id = "picker"` stanza so the session pane's
-// `placement = "split"` cannot satisfy it.
-func TestTheManifestAndOpenPickerAgreeOnPlacement(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "herdr-plugin.toml"))
-	if err != nil {
-		t.Fatalf("read manifest: %v", err)
-	}
-
-	var inPicker bool
-	var placement string
-	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case line == "[[panes]]":
-			inPicker = false
-		case line == `id = "picker"`:
-			inPicker = true
-		case inPicker && strings.HasPrefix(line, "placement ="):
-			placement = strings.Trim(strings.TrimPrefix(line, "placement ="), ` "`)
-		}
-	}
-	if placement == "" {
-		t.Fatal("no placement found in the manifest's picker pane; the stanza scan needs updating")
-	}
-
-	var calls [][]string
-	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
-		calls = append(calls, args)
-		return []byte(`{"id":1,"result":{}}`), nil
-	}}
-	if err := openPicker(api); err != nil {
-		t.Fatalf("openPicker: %v", err)
-	}
-
-	want := "--placement " + placement
-	if got := strings.Join(calls[0], " "); !strings.Contains(got, want) {
-		t.Errorf("the manifest declares the picker pane as %q but openPicker asks for a different placement:\n  argv = %s\n  want it to contain %q", placement, got, want)
-	}
-}
-
-func TestOpenPickerDoesNotNeedAStateDir(t *testing.T) {
-	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
-	var calls int
-	api := herdrapi.Client{Run: func([]string) ([]byte, error) {
-		calls++
-		return nil, nil
-	}}
-	if err := openPicker(api); err != nil {
-		t.Fatalf("openPicker without a state dir: %v", err)
-	}
-	if calls != 1 {
-		t.Fatalf("herdr calls = %d, want one pane open", calls)
-	}
-}
-
-func TestRunPickerUsesTheForwardedCallerInsteadOfPopupContext(t *testing.T) {
-	pickerEnv(t, t.TempDir())
-	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", pluginConfigDir(t, "probe = false\nreuse_panes = false\n"))
-	t.Setenv(callerPaneEnv, "w5:pA")
-	t.Setenv(callerTabEnv, "w5:t1")
-	t.Setenv(callerWorkspaceEnv, "w5")
-	// These can describe the popup itself. They must not override the context
-	// that the action captured before it opened this process.
-	t.Setenv("HERDR_ACTIVE_PANE_ID", "w9:pPopup")
-	t.Setenv("HERDR_ACTIVE_TAB_ID", "w9:t9")
-	t.Setenv("HERDR_ACTIVE_WORKSPACE_ID", "w9")
-
-	pick, _ := stubPicker(picker.Selection{Host: devHost, Placement: "split"}, true, nil)
-	api, calls := fakeAPI(openPanesJSON)
-	if err := runPickerWith(io.Discard, strings.NewReader(""), pick, api); err != nil {
-		t.Fatalf("runPickerWith: %v", err)
-	}
-	argv := openArgv(t, *calls)
-	if !strings.Contains(argv, "--target-pane w5:pA") {
-		t.Fatalf("argv = %q, want the invocation-scoped caller pane", argv)
-	}
-	if strings.Contains(argv, "w9:pPopup") {
-		t.Fatalf("argv = %q, popup context overrode the forwarded caller", argv)
-	}
-}
-
-// eventLog records herdr calls and the stdin read that releases a held pane
-// into one ordered list. Two separate recorders cannot answer the question that
-// matters — whether the overlay closed before or after the operator read the
-// error — because nothing relates their orderings.
-type eventLog struct{ events []string }
-
-func (l *eventLog) add(e string)   { l.events = append(l.events, e) }
-func (l *eventLog) String() string { return strings.Join(l.events, "\n") }
-
-// holdReader logs the read, so the hold lands in the same sequence as the herdr
-// calls around it.
-type holdReader struct {
-	log *eventLog
-	r   io.Reader
-}
-
-func (h *holdReader) Read(p []byte) (int, error) {
-	h.log.add("hold")
-	return h.r.Read(p)
-}
-
-// brokenAPI logs every call and fails all of them, which is what a herdr that
-// died under the picker looks like.
-func brokenAPI(log *eventLog) herdrapi.Client {
-	return herdrapi.Client{Run: func(args []string) ([]byte, error) {
-		log.add(strings.Join(args, " "))
-		return []byte("herdr is not running"), errRenameTest
-	}}
-}
-
-// stubPicker stands in for picker.Run and captures the Options it was handed.
-// Those Options are the only place the footer warnings ever go — nothing writes
-// them out — so capturing them is the only way to assert they were built.
-func stubPicker(sel picker.Selection, ok bool, err error) (pickerFn, *picker.Options) {
-	var got picker.Options
-	return func(opts picker.Options) (picker.Selection, bool, error) {
+// stubNavigator stands in for picker.RunNavigator and captures the NavOptions it
+// was handed. Those Options are the only place the footer warnings ever go —
+// nothing writes them out — so capturing them is the only way to assert they
+// were built.
+func stubNavigator(sel picker.NavSelection, ok bool, err error) (navigatorFn, *picker.NavOptions) {
+	var got picker.NavOptions
+	return func(opts picker.NavOptions) (picker.NavSelection, bool, error) {
 		got = opts
 		return sel, ok, err
 	}, &got
@@ -245,8 +90,8 @@ func badThemeFile(t *testing.T) string {
 	return path
 }
 
-// pickerEnv isolates runPickerWith from the ambient environment.
-func pickerEnv(t *testing.T, home string) {
+// navigatorEnv isolates runNavigatorWith from the ambient environment.
+func navigatorEnv(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", "")
@@ -254,7 +99,7 @@ func pickerEnv(t *testing.T, home string) {
 	t.Setenv("HERDR_PANE_ID", "")
 }
 
-// TestRunPickerBuildsTheFooterWarningsInAFixedOrder breaks the plugin config,
+// TestRunNavigatorBuildsTheFooterWarningsInAFixedOrder breaks the plugin config,
 // the theme file, and the ssh config at once, deliberately.
 //
 // Do not split this into one test per source "for clarity". `append(A, B...)`
@@ -263,18 +108,18 @@ func pickerEnv(t *testing.T, home string) {
 // append orders at all — the reversal it exists to catch becomes unkillable by
 // any assertion the split tests could make. All three broken simultaneously is
 // what makes the ordering observable.
-func TestRunPickerBuildsTheFooterWarningsInAFixedOrder(t *testing.T) {
-	pickerEnv(t, brokenIncludeHome(t))
+func TestRunNavigatorBuildsTheFooterWarningsInAFixedOrder(t *testing.T) {
+	navigatorEnv(t, brokenIncludeHome(t))
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", badPluginConfigDir(t))
 	t.Setenv("HERDR_CONFIG_PATH", badThemeFile(t))
 
 	// The operator cancels, so nothing past the picker runs and this test is
 	// only about what was handed to it.
-	pick, opts := stubPicker(picker.Selection{}, false, nil)
+	pick, opts := stubNavigator(picker.NavSelection{}, false, nil)
 	api, _ := fakeAPI(openPanesJSON)
 	var screen bytes.Buffer
-	if err := runPickerWith(&screen, strings.NewReader(""), pick, api); err != nil {
-		t.Fatalf("runPickerWith: %v", err)
+	if err := runNavigatorWith(&screen, strings.NewReader(""), pick, api); err != nil {
+		t.Fatalf("runNavigatorWith: %v", err)
 	}
 
 	// One plugin-config warning, one theme warning, one per broken include. A
@@ -317,11 +162,11 @@ func rejectedConfigWarning(t *testing.T, configDir string) string {
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
 
 	// The operator cancels, so nothing past the picker runs.
-	pick, opts := stubPicker(picker.Selection{}, false, nil)
+	pick, opts := stubNavigator(picker.NavSelection{}, false, nil)
 	api, _ := fakeAPI(openPanesJSON)
 	var screen bytes.Buffer
-	if err := runPickerWith(&screen, strings.NewReader(""), pick, api); err != nil {
-		t.Fatalf("runPickerWith: %v", err)
+	if err := runNavigatorWith(&screen, strings.NewReader(""), pick, api); err != nil {
+		t.Fatalf("runNavigatorWith: %v", err)
 	}
 	for _, w := range opts.Warnings {
 		if strings.Contains(w, "ignoring the rejected keys") {
@@ -333,8 +178,8 @@ func rejectedConfigWarning(t *testing.T, configDir string) string {
 }
 
 // TestARejectedConfigReadsTheSameOnBothPaths pins one sentence for one failure.
-// The picker built "plugin config: %v — ignoring the rejected keys" and connect
-// built "herdr-ssh: %v — ignoring the rejected keys", so a single bad
+// The navigator built "plugin config: %v — ignoring the rejected keys" and connect
+// built "herdr-picker: %v — ignoring the rejected keys", so a single bad
 // config.toml had two spellings depending on which verb the operator happened to
 // type, and neither reader could tell they were reading the same thing.
 //
@@ -348,7 +193,7 @@ func rejectedConfigWarning(t *testing.T, configDir string) string {
 // literal is satisfied by whichever half is edited next, which is exactly how
 // the two drifted apart.
 func TestARejectedConfigReadsTheSameOnBothPaths(t *testing.T) {
-	pickerEnv(t, t.TempDir())
+	navigatorEnv(t, t.TempDir())
 	dir := badPluginConfigDir(t)
 	footer := rejectedConfigWarning(t, dir)
 
@@ -358,11 +203,11 @@ func TestARejectedConfigReadsTheSameOnBothPaths(t *testing.T) {
 		t.Fatal("runConnectWith err = nil, want a not-found error")
 	}
 
-	if want := "herdr-ssh: " + footer + "\n"; !strings.Contains(stderr.String(), want) {
+	if want := "herdr-picker: " + footer + "\n"; !strings.Contains(stderr.String(), want) {
 		t.Errorf("the two verbs word one failure differently.\npicker footer: %q\nconnect stderr:\n%s",
 			footer, stderr.String())
 	}
-	if strings.Contains(footer, "herdr-ssh:") {
+	if strings.Contains(footer, "herdr-picker:") {
 		t.Errorf("the footer names the program: %q — inside the picker's own footer nobody else is speaking", footer)
 	}
 }
@@ -377,7 +222,7 @@ func TestARejectedConfigReadsTheSameOnBothPaths(t *testing.T) {
 // that the shape is reachable from a config an operator can write, so the
 // picker's handling of it is not defending against a hypothetical.
 func TestARejectedConfigCanCarryMoreThanOneLine(t *testing.T) {
-	pickerEnv(t, t.TempDir())
+	navigatorEnv(t, t.TempDir())
 	// probe = false keeps the run off the network; both other keys are rejected,
 	// which is what makes the join have something to join.
 	footer := rejectedConfigWarning(t, pluginConfigDir(t,
@@ -425,16 +270,16 @@ func warningWith(t *testing.T, warnings []string, substr string) string {
 // with the loader's own text is the form that fails for any prefix at all,
 // including one nobody has thought of yet.
 func TestALoadWarningNamesItsSourceOnce(t *testing.T) {
-	pickerEnv(t, t.TempDir())
+	navigatorEnv(t, t.TempDir())
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", badPluginConfigDir(t))
 	t.Setenv("HERDR_CONFIG_PATH", badThemeFile(t))
 
 	// The operator cancels, so nothing past the picker runs.
-	pick, opts := stubPicker(picker.Selection{}, false, nil)
+	pick, opts := stubNavigator(picker.NavSelection{}, false, nil)
 	api, _ := fakeAPI(openPanesJSON)
 	var screen bytes.Buffer
-	if err := runPickerWith(&screen, strings.NewReader(""), pick, api); err != nil {
-		t.Fatalf("runPickerWith: %v", err)
+	if err := runNavigatorWith(&screen, strings.NewReader(""), pick, api); err != nil {
+		t.Fatalf("runNavigatorWith: %v", err)
 	}
 
 	for _, tc := range []struct{ remedy, opens string }{
@@ -448,91 +293,9 @@ func TestALoadWarningNamesItsSourceOnce(t *testing.T) {
 	}
 }
 
-func TestRunPickerHoldsTheOverlayBeforeClosingIt(t *testing.T) {
-	pickerEnv(t, t.TempDir())
-	t.Setenv("HERDR_PANE_ID", "w5:pOverlay")
-
-	log := &eventLog{}
-	pick, _ := stubPicker(picker.Selection{Host: devHost, Placement: "split"}, true, nil)
-	var screen bytes.Buffer
-	in := &holdReader{log: log, r: strings.NewReader("\n")}
-
-	err := runPickerWith(&screen, in, pick, brokenAPI(log))
-	if err == nil {
-		t.Fatal("runPickerWith err = nil, want the failed selection")
-	}
-	// Carrying errReported is what stops main printing the same line again
-	// after the keypress, when the pane is already going away.
-	if !errors.Is(err, errReported) {
-		t.Errorf("err = %v, want it to carry errReported", err)
-	}
-
-	wantDiagnostics(t, screen.String(),
-		"could not list panes",
-		errRenameTest.Error(),
-		"press enter to close",
-		"could not close the picker pane",
-	)
-	// The ordering that the whole branch exists for: close the overlay after
-	// the operator has read the error, never before. Closing first takes the
-	// only explanation off the screen with it, and every other assertion in
-	// this test passes either way.
-	wantDiagnostics(t, log.String(), "plugin pane open", "hold", "plugin pane close")
-}
-
-func TestRunPickerHoldsThePaneWhenThePickerItselfFails(t *testing.T) {
-	pickerEnv(t, t.TempDir())
-	t.Setenv("HERDR_PANE_ID", "w5:pOverlay")
-
-	log := &eventLog{}
-	pick, _ := stubPicker(picker.Selection{}, false, errRenameTest)
-	var screen bytes.Buffer
-	in := &holdReader{log: log, r: strings.NewReader("\n")}
-
-	err := runPickerWith(&screen, in, pick, brokenAPI(log))
-	if err == nil {
-		t.Fatal("runPickerWith err = nil, want the picker's error")
-	}
-	if !errors.Is(err, errReported) {
-		t.Errorf("err = %v, want it to carry errReported", err)
-	}
-	// A picker that never rendered leaves nothing on screen but this. Returning
-	// bare here drops it into a pane that is already closing.
-	wantDiagnostics(t, screen.String(), errRenameTest.Error(), "press enter to close")
-	if !strings.Contains(log.String(), "hold") {
-		t.Errorf("events = %v, want the pane held for a keypress", log.events)
-	}
-	// Deliberately no close on this path, matching the code. Asserted so that
-	// adding one is a decision someone makes on purpose rather than by
-	// symmetry with the branch above.
-	if strings.Contains(log.String(), "plugin pane close") {
-		t.Errorf("events = %v, want no close when the picker never rendered", log.events)
-	}
-}
-
-func TestRunPickerClosesTheOverlayQuietlyOnCancel(t *testing.T) {
-	pickerEnv(t, t.TempDir())
-	t.Setenv("HERDR_PANE_ID", "w5:pOverlay")
-
-	pick, _ := stubPicker(picker.Selection{}, false, nil)
-	var screen bytes.Buffer
-	api, calls := fakeAPI(openPanesJSON)
-
-	// Escape is the common exit, not an error one. The overlay still has to go
-	// away — leaving it up is the one outcome the operator cannot undo without
-	// killing the pane — and nothing should be said about it.
-	if err := runPickerWith(&screen, strings.NewReader(""), pick, api); err != nil {
-		t.Fatalf("runPickerWith: %v", err)
-	}
-	if got := joined(*calls); len(got) != 2 || got[1] != "plugin pane close w5:pOverlay" {
-		t.Fatalf("calls = %v, want the open-sessions list then a close of this pane", got)
-	}
-	wantQuiet(t, screen.String())
-}
-
-// TestRunPickerListsPanesOnlyWhenReuseIsOn ties the ▪ marker's input to the one
-// config key that can make the marker true. OpenPanes has exactly two effects —
-// it paints ▪, and ▪ outranks the ●/○ reachability glyphs — and with
+// TestRunNavigatorListsPanesOnlyWhenReuseIsOn ties the ▪ marker's input to the
+// one config key that can make the marker true. OpenPanes has exactly two
+// effects — it paints ▪, and ▪ outranks the ●/○ reachability glyphs — and with
 // reuse_panes = false both are wrong: enter opens a second pane to a host the
 // marker says already has one, and the glyph it hid was the accurate one.
 //
@@ -546,45 +309,43 @@ func TestRunPickerClosesTheOverlayQuietlyOnCancel(t *testing.T) {
 // fixture produces a pane worth marking and that this seam records the call at
 // all, so the empty log opposite it is a suppressed round-trip rather than a
 // harness that never observed one.
-func TestRunPickerListsPanesOnlyWhenReuseIsOn(t *testing.T) {
+func TestRunNavigatorListsPanesOnlyWhenReuseIsOn(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		// probe = false keeps the run hermetic. Probing puts a SYN on the wire
 		// per host, and this test is about a herdr round-trip, not a network.
 		body string
 		// The whole herdr call log, not just whether "pane list" is in it. The
-		// operator cancels and HERDR_PANE_ID is empty, so closeOverlay returns
-		// before calling and the list is the only call this path can make —
-		// which makes an exact match the strongest available statement, and one
-		// that also catches a stray extra round-trip.
+		// snapshot is unconditional; the pane list is the only other call this
+		// path can make, because the operator cancels and HERDR_PANE_ID is empty.
 		wantCalls string
 		wantPanes int
 	}{
 		{
 			name:      "reuse on lists and marks",
 			body:      "probe = false\nreuse_panes = true\n",
-			wantCalls: "pane list",
+			wantCalls: "api snapshot | pane list",
 			wantPanes: 1,
 		},
 		{
 			name:      "reuse off neither lists nor marks",
 			body:      "probe = false\nreuse_panes = false\n",
-			wantCalls: "",
+			wantCalls: "api snapshot",
 			wantPanes: 0,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			pickerEnv(t, t.TempDir())
+			navigatorEnv(t, t.TempDir())
 			t.Setenv("HERDR_PLUGIN_CONFIG_DIR", pluginConfigDir(t, tc.body))
 
 			// Cancelling, so nothing past the picker runs. performSelection
 			// reads ReusePanes as well and lists panes of its own, and in a flat
 			// call log its list is indistinguishable from the picker's.
-			pick, opts := stubPicker(picker.Selection{}, false, nil)
+			pick, opts := stubNavigator(picker.NavSelection{}, false, nil)
 			api, calls := fakeAPI(openPanesJSON)
 			var screen bytes.Buffer
-			if err := runPickerWith(&screen, strings.NewReader(""), pick, api); err != nil {
-				t.Fatalf("runPickerWith: %v", err)
+			if err := runNavigatorWith(&screen, strings.NewReader(""), pick, api); err != nil {
+				t.Fatalf("runNavigatorWith: %v", err)
 			}
 
 			if got := strings.Join(joined(*calls), " | "); got != tc.wantCalls {
@@ -603,36 +364,6 @@ func TestRunPickerListsPanesOnlyWhenReuseIsOn(t *testing.T) {
 			wantQuiet(t, screen.String())
 		})
 	}
-}
-
-func TestCloseOverlayReportsAPaneThatWouldNotClose(t *testing.T) {
-	api := herdrapi.Client{Run: func([]string) ([]byte, error) {
-		return []byte("no such pane"), errRenameTest
-	}}
-	var screen bytes.Buffer
-	closeOverlay(&screen, api, "w5:pA")
-	// closeOverlay returns nothing and the caller ignores it, so this message is
-	// the entire observable result of the failure. An overlay that will not
-	// close leaves the operator looking at a stuck picker over their session,
-	// and silence here makes that look like a hang rather than a failed call.
-	wantDiagnostics(t, screen.String(), "could not close the picker pane", errRenameTest.Error())
-}
-
-func TestCloseOverlayIsQuietWhenThereIsNoPane(t *testing.T) {
-	var called bool
-	api := herdrapi.Client{Run: func([]string) ([]byte, error) {
-		called = true
-		return []byte("no such pane"), errRenameTest
-	}}
-	var screen bytes.Buffer
-	// Outside herdr there is no HERDR_PANE_ID. Closing anyway would send
-	// `pane close ""` and then report the failure that caused, so the guard has
-	// to come first — and dropping it is silent in every other assertion.
-	closeOverlay(&screen, api, "")
-	if called {
-		t.Error("herdr was called with an empty pane id")
-	}
-	wantQuiet(t, screen.String())
 }
 
 func TestRunConnectReportsARejectedConfig(t *testing.T) {
@@ -697,8 +428,8 @@ func TestAFatalPaneExitIsPrintedExactlyOnce(t *testing.T) {
 	}
 	reportFatal(&screen, err)
 
-	if got := strings.Count(screen.String(), "herdr-ssh:"); got != 1 {
-		t.Errorf("the operator's screen was:\n%s\n\"herdr-ssh:\" appears %d times, want 1", screen.String(), got)
+	if got := strings.Count(screen.String(), "herdr-picker:"); got != 1 {
+		t.Errorf("the operator's screen was:\n%s\n\"herdr-picker:\" appears %d times, want 1", screen.String(), got)
 	}
 }
 
@@ -715,7 +446,7 @@ func TestReportFatalPrintsOnlyWhatIsNotOnScreenYet(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
-		want int // times "herdr-ssh:" must appear
+		want int // times "herdr-picker:" must appear
 	}{
 		{"a usage error, printed nowhere else", usageErr, 1},
 		{"any other unreported error", errors.New("boom"), 1},
@@ -726,8 +457,8 @@ func TestReportFatalPrintsOnlyWhatIsNotOnScreenYet(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 			reportFatal(&out, tc.err)
-			if got := strings.Count(out.String(), "herdr-ssh:"); got != tc.want {
-				t.Errorf("reportFatal wrote %q; \"herdr-ssh:\" appears %d times, want %d", out.String(), got, tc.want)
+			if got := strings.Count(out.String(), "herdr-picker:"); got != tc.want {
+				t.Errorf("reportFatal wrote %q; \"herdr-picker:\" appears %d times, want %d", out.String(), got, tc.want)
 			}
 		})
 	}
@@ -738,7 +469,7 @@ func TestReportFatalPrintsOnlyWhatIsNotOnScreenYet(t *testing.T) {
 // observed at all. mainProbeTest is the test holding the re-entry branch, so
 // every probe re-runs that one test whichever test spawned it.
 const (
-	mainProbeEnv  = "HERDR_SSH_TEST_MAIN_VERB"
+	mainProbeEnv  = "HERDR_PICKER_TEST_MAIN_VERB"
 	mainProbeTest = "TestMainDispatchesThroughRunAndSetsTheExitCode"
 )
 
@@ -789,7 +520,7 @@ func TestMainDispatchesThroughRunAndSetsTheExitCode(t *testing.T) {
 		// rewrite here. Doing so makes the verb explicit rather than whatever
 		// -test flags this binary happened to be handed, and it is still main
 		// that has to read os.Args[1:] and hand it to run.
-		os.Args = append([]string{"herdr-ssh"}, strings.Fields(verb)...)
+		os.Args = append([]string{"herdr-picker"}, strings.Fields(verb)...)
 		main()
 		// Reached only when run returned nil. A failing verb that gets here has
 		// exited 0, which the parent's exit-code assertion catches.
@@ -805,13 +536,13 @@ func TestMainDispatchesThroughRunAndSetsTheExitCode(t *testing.T) {
 		env      []string
 		wantCode int
 		wantOut  string
-		wantMsgs int // times "herdr-ssh:" must appear
+		wantMsgs int // times "herdr-picker:" must appear
 	}{
 		{
 			name:     "a verb that fails is reported once and exits 1",
 			verb:     "wat",
 			wantCode: 1,
-			wantOut:  "herdr-ssh: usage:",
+			wantOut:  "herdr-picker: usage:",
 			wantMsgs: 1,
 		},
 		{
@@ -825,7 +556,7 @@ func TestMainDispatchesThroughRunAndSetsTheExitCode(t *testing.T) {
 			name: "a verb whose error was already held on screen is not printed again",
 			verb: "session",
 			env: []string{
-				"HERDR_SSH_TARGET=",
+				"HERDR_PICKER_TARGET=",
 				"HERDR_PANE_ID=",
 				"HERDR_PLUGIN_CONFIG_DIR=",
 			},
@@ -835,7 +566,7 @@ func TestMainDispatchesThroughRunAndSetsTheExitCode(t *testing.T) {
 		},
 		{
 			name: "a verb that succeeds says nothing and exits 0",
-			verb: "plugin open-picker",
+			verb: "plugin open-navigator",
 			env: []string{
 				"HERDR_BIN_PATH=" + fakeHerdr(t),
 				"HERDR_PANE_ID=w5:pA",
@@ -862,46 +593,11 @@ func TestMainDispatchesThroughRunAndSetsTheExitCode(t *testing.T) {
 				t.Errorf("output = %q, want it to contain %q", out, tc.wantOut)
 			}
 			// Same assertion as the pane exit, on a real process this time.
-			if got := strings.Count(out, "herdr-ssh:"); got != tc.wantMsgs {
-				t.Errorf("output was:\n%s\n\"herdr-ssh:\" appears %d times, want %d", out, got, tc.wantMsgs)
+			if got := strings.Count(out, "herdr-picker:"); got != tc.wantMsgs {
+				t.Errorf("output was:\n%s\n\"herdr-picker:\" appears %d times, want %d", out, got, tc.wantMsgs)
 			}
 		})
 	}
-}
-
-func TestRunPickerWiresTheRealTerminalPickerAndClient(t *testing.T) {
-	// runPickerWith carries every assertion above it, and all of them pass on a
-	// runPicker that hands it the wrong things. This is the only test that runs
-	// the delegation itself, so it is the only one that fails if runPicker
-	// stops passing os.Stdout, os.Stdin, picker.Run, or a real client.
-	//
-	// A child process is what makes that observable: the picker needs a tty it
-	// will not get, so bubbletea fails at once instead of hanging, and stdin is
-	// /dev/null so the hold reads EOF and returns.
-	code, stdout, stderr := runMain(t, "picker",
-		"HOME="+t.TempDir(),
-		"HERDR_BIN_PATH="+filepath.Join(t.TempDir(), "herdr-does-not-exist"),
-		"HERDR_PLUGIN_CONFIG_DIR=",
-		"HERDR_CONFIG_PATH=",
-		"HERDR_PANE_ID=",
-	)
-
-	if code != 1 {
-		t.Errorf("exit code = %d, want 1; stdout:\n%s\nstderr:\n%s", code, stdout, stderr)
-	}
-	// Each of these three comes from a different injected argument, in the order
-	// runPicker uses them: the client (openSessions could not reach herdr), the
-	// picker (bubbletea's own failure, which only the real picker.Run produces),
-	// and the terminal (the hold). All on stdout, because a pane has one screen.
-	wantDiagnostics(t, stdout,
-		"could not list panes",
-		"bubbletea",
-		"press enter to close",
-	)
-	// Nothing on stderr: the error was held on screen, so reportFatal suppressed
-	// it. A second copy here is what errReported exists to prevent, and this is
-	// the picker's end-to-end version of that check.
-	wantQuiet(t, stderr)
 }
 
 // hiddenAlias and alsoHiddenAlias are defined only inside the unreadable
@@ -922,7 +618,7 @@ const (
 // that anything went missing. Returns the HOME to run the child against.
 //
 // Exactly two warnings, cited at lines 1 and 2. Callers that count them —
-// TestRunPickerBuildsTheFooterWarningsInAFixedOrder — depend on that number.
+// TestRunNavigatorBuildsTheFooterWarningsInAFixedOrder — depend on that number.
 func brokenIncludeHome(t *testing.T) string {
 	t.Helper()
 	if os.Geteuid() == 0 {
@@ -965,13 +661,13 @@ func brokenIncludeHome(t *testing.T) string {
 // wantIncludeWarning asserts the warning for one include, whole and prefixed.
 //
 // Matching the payload alone ("include unreadable") leaves two things unpinned.
-// The `herdr-ssh: ` prefix is how an operator tells plugin output from ssh's
+// The `herdr-picker: ` prefix is how an operator tells plugin output from ssh's
 // own on a shared stderr, and dropping it changes nothing a payload match can
 // see. And naming the specific include is what distinguishes a loop that
 // printed every warning from one that printed the first and stopped.
 func wantIncludeWarning(t *testing.T, stderr, home string, line int, include string) {
 	t.Helper()
-	want := fmt.Sprintf("herdr-ssh: %s:%d: include unreadable: %s",
+	want := fmt.Sprintf("herdr-picker: %s:%d: include unreadable: %s",
 		filepath.Join(home, ".ssh", "config"), line, filepath.Join(home, ".ssh", include))
 	if !strings.Contains(stderr, want) {
 		t.Errorf("stderr = %q,\nwant it to contain %q", stderr, want)

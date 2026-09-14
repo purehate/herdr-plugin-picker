@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/pluginconfig"
-	"github.com/purehate/herdr-plugin-ssh/internal/probe"
-	"github.com/purehate/herdr-plugin-ssh/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/probe"
+	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
 )
 
 // sshConfigPath returns the operator's ssh config path, or "" when there is none

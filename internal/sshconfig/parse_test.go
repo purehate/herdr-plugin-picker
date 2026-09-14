@@ -448,13 +448,13 @@ func TestParseWarnsOnUnbalancedQuotes(t *testing.T) {
 // is the only thing identifying the file to the operator.
 //
 // This is a cross-package contract with nothing holding it up on either side.
-// Warning.String() renders "%s:%d: %s" from File, and cmd/herdr-ssh/hosts.go
+// Warning.String() renders "%s:%d: %s" from File, and cmd/herdr-picker/hosts.go
 // appends that string to the picker footer verbatim — no path prefix of its
 // own, deliberately: 87ecc8a removed the prefix it used to add because the
 // path was already in the rendered string, and the file was being named twice.
 // So if File ever became the caller's spelling of the path, footer warnings
 // would silently degrade to whatever the operator typed — a bare "config:7:"
-// for `herdr-ssh --config config` — and hosts_test.go would not notice, since
+// for `herdr-picker --config config` — and hosts_test.go would not notice, since
 // its expectations are built from the same fixture path it passes in. Both
 // halves stay green while the operator loses the ability to tell which file
 // warned. Pinned here, where the contract is produced.

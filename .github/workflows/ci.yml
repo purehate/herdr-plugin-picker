@@ -32,7 +32,7 @@ jobs:
           version: v2.13.2
       - name: Test
         # -timeout is per test binary, not per suite: the bound applies to the
-        # slowest package, which is cmd/herdr-ssh at 5.2s under -race (max of
+        # slowest package, which is cmd/herdr-picker at 5.2s under -race (max of
         # three runs at 051a1a2, 16 cores). 2m is ~23x that for headroom on a
         # slower runner, and still fails 5x sooner than Go's 10m default. If a
         # runner ever trips it, raise it -- a timeout that fires on a slow
@@ -48,4 +48,4 @@ jobs:
         # of failure.
         run: go test -race -count=1 -timeout 2m ./...
       - name: Build
-        run: go build -o bin/ ./cmd/herdr-ssh
+        run: go build -o bin/ ./cmd/herdr-picker

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/pluginconfig"
-	"github.com/purehate/herdr-plugin-ssh/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
 )
 
 func writeSSHConfig(t *testing.T, name, body string) string {

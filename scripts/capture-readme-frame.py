@@ -16,6 +16,12 @@ the live server. The synthetic HOME is what keeps the operator's real
 ~/.ssh/config out of a public README -- sshConfigPath() goes through
 os.UserHomeDir(), which honours $HOME on unix.
 
+The picker is now the tabbed navigator, so the capture opens on the ssh tab
+(three Tab presses) to show the host list, markers, and preview. The navigator
+reads its workspace inventory from `herdr api snapshot` before it draws, so a
+fake herdr is placed first on PATH: it answers the snapshot with an empty
+inventory rather than reaching the operator's live server.
+
 One host points at a socket this script is listening on, so the reachability
 probe has a success to report; the rest resolve nowhere and one sits behind a
 ProxyJump. That is what makes the captured frame show every marker state.
@@ -34,7 +40,7 @@ from pathlib import Path
 ROWS, COLS = 28, 94
 
 REPO = Path(__file__).resolve().parent.parent
-BIN = REPO / "bin" / "herdr-ssh"
+BIN = REPO / "bin" / "herdr-picker"
 
 # Short and under /tmp on purpose, not mkdtemp's default. The preview truncates
 # to the pane width, and it truncates the absolute path the picker actually
@@ -57,6 +63,28 @@ def tmux(*args: str, capture: bool = False) -> str:
         capture_output=capture,
     )
     return result.stdout if capture else ""
+
+
+def write_herdr_shim() -> Path:
+    """Lay down a fake herdr that answers the snapshot with an empty inventory.
+
+    The navigator calls `herdr api snapshot` before it draws. Under `env -i`
+    there is no herdr on PATH, so without this the process dies before the
+    first frame. Pointing PATH at a real herdr is the wrong fix: it would let
+    this capture reach the operator's live server and render their real panes
+    into a public README. The shim answers the one call the picker makes and
+    nothing else.
+    """
+    bin = HOME / "bin"
+    bin.mkdir(parents=True, exist_ok=True)
+    shim = bin / "herdr"
+    shim.write_text(
+        "#!/bin/sh\n"
+        "printf '%s' '{\"id\":1,\"result\":{\"snapshot\":{\"workspaces\":[],\"tabs\":[],\"agents\":[]}}}'\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    return bin
 
 
 def write_config(port: int) -> None:
@@ -82,7 +110,7 @@ def write_config(port: int) -> None:
     # This lands on resolvePluginConfigDir's fallback, which is
     # ~/.config/herdr/plugins/config/<id>/ -- reachable here precisely because
     # HOME is synthetic, and reached without setting any HERDR_* variable.
-    cfg = HOME / ".config" / "herdr" / "plugins" / "config" / "purehate.herdr-ssh"
+    cfg = HOME / ".config" / "herdr" / "plugins" / "config" / "purehate.herdr-picker"
     cfg.mkdir(parents=True, exist_ok=True)
     with open(cfg / "config.toml", "w", encoding="utf-8") as f:
         f.write("reuse_panes = false\n")
@@ -116,6 +144,7 @@ def write_config(port: int) -> None:
 
 def capture(port: int) -> str:
     write_config(port)
+    bindir = write_herdr_shim()
     tmux(
         "new-session",
         "-d",
@@ -127,9 +156,15 @@ def capture(port: int) -> str:
         str(ROWS),
         # env -i rather than a filtered copy: an unset HERDR_* variable that
         # gets added to herdr later would otherwise silently reconnect this.
-        f"env -i HOME={HOME} TERM=xterm-256color PATH=/usr/bin:/bin {BIN} picker",
+        # PATH starts with the shim dir so the snapshot call lands there.
+        f"env -i HOME={HOME} TERM=xterm-256color PATH={bindir}:/usr/bin:/bin {BIN} navigator",
     )
     try:
+        # Let the first frame paint, then move from spaces to the ssh tab.
+        time.sleep(0.8)
+        for _ in range(3):
+            tmux("send-keys", "-t", SESSION, "Tab")
+            time.sleep(0.2)
         # Long enough for the probe to answer: the markers arrive from the
         # network after the first paint, and a frame captured before they land
         # shows a blank marker column, which is a different claim.

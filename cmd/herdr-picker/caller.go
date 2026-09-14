@@ -3,9 +3,9 @@ package main
 import "os"
 
 const (
-	callerPaneEnv      = "HERDR_SSH_CALLER_PANE_ID"
-	callerTabEnv       = "HERDR_SSH_CALLER_TAB_ID"
-	callerWorkspaceEnv = "HERDR_SSH_CALLER_WORKSPACE_ID"
+	callerPaneEnv      = "HERDR_PICKER_CALLER_PANE_ID"
+	callerTabEnv       = "HERDR_PICKER_CALLER_TAB_ID"
+	callerWorkspaceEnv = "HERDR_PICKER_CALLER_WORKSPACE_ID"
 )
 
 // caller is the pane the operator triggered the picker from. The popup needs

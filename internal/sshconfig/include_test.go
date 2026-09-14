@@ -317,11 +317,11 @@ func TestParseUsesSSHDirAsIncludeBase(t *testing.T) {
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	const distinctiveHost = "herdr-ssh-test-real-base-proof"
+	const distinctiveHost = "herdr-picker-test-real-base-proof"
 	write(t, filepath.Join(sshDir, "from-real-base"), "Host "+distinctiveHost+"\n  Port 4242\n")
 
 	dir := t.TempDir()
-	const sibling = "herdr-ssh-test-sibling-absent"
+	const sibling = "herdr-picker-test-sibling-absent"
 	write(t, filepath.Join(dir, sibling), "Host sibling-host\n")
 	write(t, filepath.Join(dir, "root"), "Include from-real-base\nInclude "+sibling+"\n")
 
@@ -510,7 +510,7 @@ func TestParseIncludeMalformedPatternWarnsButAbsentIsSilent(t *testing.T) {
 //
 // Exported Parse, not parse: the include base is the thing under test here, and
 // only Parse derives it from the home directory. That is also the only way this
-// path is reachable at all — cmd/herdr-ssh stops at sshConfigPath returning ""
+// path is reachable at all — cmd/herdr-picker stops at sshConfigPath returning ""
 // before it ever calls Parse, so what is pinned here is the package's own
 // contract for a caller that supplies a root explicitly.
 func TestParseWarnsOnAnIncludeItCannotResolveWithoutHome(t *testing.T) {

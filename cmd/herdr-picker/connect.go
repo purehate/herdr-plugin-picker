@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/herdrapi"
-	"github.com/purehate/herdr-plugin-ssh/internal/picker"
-	"github.com/purehate/herdr-plugin-ssh/internal/pluginconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/herdrapi"
+	"github.com/purehate/herdr-plugin-picker/internal/picker"
+	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
 )
 
-const pluginID = "purehate.herdr-ssh"
+const pluginID = "purehate.herdr-picker"
 
 // performSelection focuses an existing session for this host when there is one,
 // and otherwise opens a new session pane. Diagnostics go to out rather than
@@ -58,7 +58,7 @@ func performSelection(out io.Writer, api herdrapi.Client, cfg pluginconfig.Confi
 		Placement:  sel.Placement,
 		TargetPane: ctx.PaneID,
 		Direction:  cfg.SplitDirection,
-		Env:        map[string]string{"HERDR_SSH_TARGET": sel.Host.Alias},
+		Env:        map[string]string{"HERDR_PICKER_TARGET": sel.Host.Alias},
 		Focus:      true,
 	})
 }
@@ -71,7 +71,7 @@ func performSelection(out io.Writer, api herdrapi.Client, cfg pluginconfig.Confi
 func listPanes(out io.Writer, api herdrapi.Client) []herdrapi.Pane {
 	panes, err := api.PaneList()
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "herdr-ssh: could not list panes: %v\n", err)
+		_, _ = fmt.Fprintf(out, "herdr-picker: could not list panes: %v\n", err)
 		return nil
 	}
 	return panes
@@ -96,7 +96,7 @@ func openSessions(out io.Writer, api herdrapi.Client) map[string]string {
 	sessions := map[string]string{}
 	panes, err := api.PaneList()
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "herdr-ssh: could not list panes: %v\n", err)
+		_, _ = fmt.Fprintf(out, "herdr-picker: could not list panes: %v\n", err)
 		return sessions
 	}
 	for _, p := range panes {

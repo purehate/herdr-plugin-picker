@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"syscall"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/herdrapi"
-	"github.com/purehate/herdr-plugin-ssh/internal/pluginconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/herdrapi"
+	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
 )
 
 const labelPrefix = "ssh:"
@@ -36,11 +36,11 @@ func sessionArgv(sshArgs []string, alias string) []string {
 // reuse is much cheaper than losing the connection the operator asked for.
 func prepareSession(out io.Writer, api herdrapi.Client, cfg pluginconfig.Config, alias, paneID string) ([]string, error) {
 	if alias == "" {
-		return nil, errors.New("HERDR_SSH_TARGET is not set")
+		return nil, errors.New("HERDR_PICKER_TARGET is not set")
 	}
 	if paneID != "" {
 		if err := api.PaneRename(paneID, sessionLabel(alias)); err != nil {
-			_, _ = fmt.Fprintf(out, "herdr-ssh: could not label pane: %v\n", err)
+			_, _ = fmt.Fprintf(out, "herdr-picker: could not label pane: %v\n", err)
 		}
 	}
 	return sessionArgv(cfg.SSHArgs, alias), nil
@@ -67,7 +67,7 @@ func (r reported) Unwrap() []error { return []error{r.err, errReported} }
 // pane entrypoints. The screen is the only channel. The returned error carries
 // errReported so main does not print it again.
 func fatalInPane(out io.Writer, in io.Reader, err error) error {
-	_, _ = fmt.Fprintf(out, "herdr-ssh: %v\n\npress enter to close\n", err)
+	_, _ = fmt.Fprintf(out, "herdr-picker: %v\n\npress enter to close\n", err)
 	_, _ = fmt.Fscanln(in)
 	return reported{err}
 }
@@ -88,10 +88,10 @@ func runSessionWith(out io.Writer, in io.Reader) error {
 		// os.Stderr: a pane has exactly one output channel, and both land on the
 		// same screen anyway — but a test can tell them apart, and the split was
 		// an accident rather than a decision.
-		_, _ = fmt.Fprintf(out, "herdr-ssh: %v — ignoring the rejected keys\n", err)
+		_, _ = fmt.Fprintf(out, "herdr-picker: %v — ignoring the rejected keys\n", err)
 	}
 
-	argv, err := prepareSession(out, herdrapi.New(), cfg, os.Getenv("HERDR_SSH_TARGET"), os.Getenv("HERDR_PANE_ID"))
+	argv, err := prepareSession(out, herdrapi.New(), cfg, os.Getenv("HERDR_PICKER_TARGET"), os.Getenv("HERDR_PANE_ID"))
 	if err != nil {
 		// A broken env contract: plausible as an install or packaging fault, and
 		// the operator sees only a pane that vanished unless we hold it.

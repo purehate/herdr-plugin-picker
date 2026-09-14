@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 		os.Exit(m.Run())
 	}
 
-	home, err := os.MkdirTemp("", "herdr-ssh-test-home")
+	home, err := os.MkdirTemp("", "herdr-picker-test-home")
 	if err != nil {
 		// Nothing has run yet, so there is no test to fail. Say why and stop
 		// rather than continue with the real home and report a result about the
@@ -64,7 +64,7 @@ func TestMain(m *testing.M) {
 		callerPaneEnv:               "",
 		callerTabEnv:                "",
 		callerWorkspaceEnv:          "",
-		"HERDR_SSH_TARGET":          "",
+		"HERDR_PICKER_TARGET":       "",
 	} {
 		if err := os.Setenv(k, v); err != nil {
 			panic("cannot pin " + k + ": " + err.Error())
@@ -154,8 +154,8 @@ func TestHerdrConfigPathPrefersTheEnvVar(t *testing.T) {
 }
 
 // TestPluginConfigDirFallsBackToTheDocumentedLayout pins the path against
-// herdr's own answer. `herdr plugin config-dir purehate.herdr-ssh` reports
-// ~/.config/herdr/plugins/config/purehate.herdr-ssh on 0.9.0, and pluginID is
+// herdr's own answer. `herdr plugin config-dir purehate.herdr-picker` reports
+// ~/.config/herdr/plugins/config/purehate.herdr-picker on 0.9.0, and pluginID is
 // the single source of the last element so the two cannot drift.
 func TestPluginConfigDirFallsBackToTheDocumentedLayout(t *testing.T) {
 	clearHerdrEnv(t)
@@ -179,7 +179,7 @@ func TestPluginConfigDirPrefersTheEnvVar(t *testing.T) {
 }
 
 // TestResolveCallerUsesTheActivePaneWhenNoCallerWasForwarded is the direct
-// popup path. That launch bypasses openPicker, so no HERDR_SSH_CALLER_* values
+// popup path. That launch bypasses openPicker, so no HERDR_PICKER_CALLER_* values
 // exist; herdr exports the operator's pane as HERDR_ACTIVE_PANE_ID instead.
 func TestResolveCallerUsesTheActivePaneWhenNoCallerWasForwarded(t *testing.T) {
 	clearHerdrEnv(t)

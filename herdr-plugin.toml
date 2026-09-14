@@ -1,6 +1,6 @@
-id = "purehate.herdr-ssh"
-name = "SSH Picker"
-version = "0.1.0"
+id = "purehate.herdr-picker"
+name = "Picker"
+version = "0.3.0"
 
 # 0.9.0 is the only version this has been built and run against, and the field
 # is pure gatekeeping — herdr refuses to link or install when the minimum is
@@ -20,17 +20,17 @@ version = "0.1.0"
 # untested compatibility claim. Lower it when someone has actually run the
 # picker on that version, not before.
 min_herdr_version = "0.9.0"
-description = "Fuzzy-pick a host from ~/.ssh/config and SSH into a new pane, tab, or zoomed pane."
+description = "One floating picker over Herdr spaces, agents, open tabs, and the hosts in ~/.ssh/config."
 platforms = ["macos", "linux"]
 
 [[build]]
-command = ["go", "build", "-o", "bin/", "./cmd/herdr-ssh"]
+command = ["go", "build", "-o", "bin/", "./cmd/herdr-picker"]
 
 [[actions]]
-id = "open-picker"
-title = "Open SSH Picker"
+id = "open-navigator"
+title = "Open Navigator"
 contexts = ["workspace", "pane"]
-command = ["./bin/herdr-ssh", "plugin", "open-picker"]
+command = ["./bin/herdr-picker", "plugin", "open-navigator"]
 
 # placement = "popup" is what makes the picker a floating box rather than a
 # pane docked into the layout. It is deliberately declared here rather than
@@ -38,7 +38,7 @@ command = ["./bin/herdr-ssh", "plugin", "open-picker"]
 # a bare command, so it needs an absolute path to this plugin's binary — a path
 # that is only knowable on the machine that checked the repo out. Declaring the
 # placement on the pane means anyone can install this and bind
-# `purehate.herdr-ssh.open-picker` with no paths at all.
+# `purehate.herdr-picker.open-navigator` with no paths at all.
 #
 # `herdr plugin pane open --help` lists only overlay/split/tab/zoomed and omits
 # popup. The help is a subset of what the parser accepts, not a superset: the
@@ -49,16 +49,22 @@ command = ["./bin/herdr-ssh", "plugin", "open-picker"]
 # picker fills whatever it is handed, so a percentage of a large terminal is a
 # wall instead of a dialog. 94 columns fits an alias plus user@hostname:port;
 # 28 rows holds a dozen hosts and the preview.
+#
+# `title` is required and non-empty, and herdr paints it on the popup's own
+# border. A zero-width space is the only way to get a border with no visible
+# label: "" and " " are both rejected as empty, and any real word would draw a
+# heading the picker's own frame already replaces with the tab bar. Do not
+# "fix" this to a readable string.
 [[panes]]
-id = "picker"
-title = "SSH Hosts"
+id = "navigator"
+title = "\u200b"
 placement = "popup"
 width = 94
 height = 28
-command = ["./bin/herdr-ssh", "picker"]
+command = ["./bin/herdr-picker", "navigator"]
 
 [[panes]]
 id = "session"
 title = "ssh"
 placement = "split"
-command = ["./bin/herdr-ssh", "session"]
+command = ["./bin/herdr-picker", "session"]

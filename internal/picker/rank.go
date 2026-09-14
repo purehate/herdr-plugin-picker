@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
 )
 
 // Match quality, best first. Alias matches always beat hostname matches: the

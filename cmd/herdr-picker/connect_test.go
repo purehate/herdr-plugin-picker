@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/herdrapi"
-	"github.com/purehate/herdr-plugin-ssh/internal/picker"
-	"github.com/purehate/herdr-plugin-ssh/internal/pluginconfig"
-	"github.com/purehate/herdr-plugin-ssh/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/herdrapi"
+	"github.com/purehate/herdr-plugin-picker/internal/picker"
+	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
 )
 
 const openPanesJSON = `{"id":1,"result":{"panes":[
@@ -72,9 +72,9 @@ func TestPerformSelectionOpensASplit(t *testing.T) {
 	if len(got) != 2 || got[0] != "pane list" {
 		t.Fatalf("calls = %v, want a pane list then an open", got)
 	}
-	want := "plugin pane open --plugin purehate.herdr-ssh --entrypoint session " +
+	want := "plugin pane open --plugin purehate.herdr-picker --entrypoint session " +
 		"--placement split --target-pane w5:pA --direction right " +
-		"--env HERDR_SSH_TARGET=nixos-dev --focus"
+		"--env HERDR_PICKER_TARGET=nixos-dev --focus"
 	// w5:pA is in the list, so a live id survives the check with reuse off.
 	if argv := openArgv(t, *calls); argv != want {
 		t.Fatalf("argv =\n  %q\nwant\n  %q", argv, want)

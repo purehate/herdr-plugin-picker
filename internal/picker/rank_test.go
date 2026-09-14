@@ -3,7 +3,7 @@ package picker
 import (
 	"testing"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
 )
 
 func aliases(matches []Match) []string {

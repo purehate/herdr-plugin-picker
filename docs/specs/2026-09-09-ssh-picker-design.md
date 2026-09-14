@@ -1,8 +1,14 @@
 # SSH Picker for Herdr — Design
 
+> **Superseded (2026-09-14).** The standalone SSH picker this describes was
+> folded into the tabbed picker as its `ssh` tab, and the plugin was renamed
+> `purehate.herdr-picker`. The manifest, entrypoints, and env vars named below
+> are historical; see `README.md` and `internal/picker/navigator.go` for what
+> shipped. Kept for the reasoning, not as a description of the current code.
+
 **Date:** 2026-09-09
-**Status:** Approved, pending implementation plan
-**Plugin id:** `purehate.herdr-ssh`
+**Status:** Superseded
+**Plugin id:** `purehate.herdr-picker` (was `purehate.herdr-ssh`)
 
 ## Goal
 

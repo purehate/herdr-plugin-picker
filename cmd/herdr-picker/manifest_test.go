@@ -13,10 +13,10 @@ package main
 // production values rather than against restated literals, so a test literal
 // cannot pin only the half herdr does not read.
 //
-// STILL UNGUARDED, deliberately: that each command's argv verb — "picker",
-// "session", "plugin open-picker" — is one run() dispatches. run() cannot be
-// called for it. `run(["picker"])` draws the picker, which needs a tty, and
-// `run(["plugin","open-picker"])` builds a real herdr client against
+// STILL UNGUARDED, deliberately: that each command's argv verb — "navigator",
+// "session", "plugin open-navigator" — is one run() dispatches. run() cannot be
+// called for it. `run(["navigator"])` draws the picker, which needs a tty, and
+// `run(["plugin","open-navigator"])` builds a real herdr client against
 // HERDR_BIN_PATH. Making either observable means a new seam in main.go, and a
 // test that settled for matching the verbs against the usage string would be
 // asserting on a help message, not on dispatch. So a verb renamed in run()
@@ -32,10 +32,10 @@ import (
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/purehate/herdr-plugin-ssh/internal/herdrapi"
-	"github.com/purehate/herdr-plugin-ssh/internal/picker"
-	"github.com/purehate/herdr-plugin-ssh/internal/pluginconfig"
-	"github.com/purehate/herdr-plugin-ssh/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/herdrapi"
+	"github.com/purehate/herdr-plugin-picker/internal/picker"
+	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
 )
 
 // manifestEntry is one [[panes]] or [[actions]] table. Only the two fields with
@@ -226,23 +226,23 @@ func TestManifestIDMatchesPluginID(t *testing.T) {
 	}
 }
 
-// TestOpenPickerUsesAManifestPaneID asserts the coupling behaviourally: it
-// takes the entrypoint out of the argv openPicker actually sends, so the test
+// TestOpenNavigatorUsesAManifestPaneID asserts the coupling behaviourally: it
+// takes the entrypoint out of the argv openNavigator actually sends, so the test
 // keeps checking the real value if the literal in main.go moves or is computed.
-func TestOpenPickerUsesAManifestPaneID(t *testing.T) {
+func TestOpenNavigatorUsesAManifestPaneID(t *testing.T) {
 	m := manifestLoad(t)
 
 	var calls [][]string
-	if err := openPicker(manifestRecorder(&calls)); err != nil {
-		t.Fatalf("openPicker: %v", err)
+	if err := openNavigator(manifestRecorder(&calls)); err != nil {
+		t.Fatalf("openNavigator: %v", err)
 	}
 
 	got := manifestOpenEntrypoint(t, calls)
 	if !m.declaresPane(got) {
-		t.Errorf("openPicker opens entrypoint %q, which herdr-plugin.toml does not declare as a [[panes]] id; declared: %v", got, m.paneIDs())
+		t.Errorf("openNavigator opens entrypoint %q, which herdr-plugin.toml does not declare as a [[panes]] id; declared: %v", got, m.paneIDs())
 	}
 	if got := manifestOpenPlugin(t, calls); got != pluginID {
-		t.Errorf("openPicker opens plugin %q, not pluginID %q; the manifest is pinned against the constant, so a literal here is unchecked", got, pluginID)
+		t.Errorf("openNavigator opens plugin %q, not pluginID %q; the manifest is pinned against the constant, so a literal here is unchecked", got, pluginID)
 	}
 }
 
@@ -284,7 +284,7 @@ func TestManifestCommandsPointAtTheBuildOutput(t *testing.T) {
 			if len(e.Command) == 0 {
 				continue // reported by the well-formedness test
 			}
-			// Clean both sides: "./bin/herdr-ssh" and "bin/herdr-ssh" name the
+			// Clean both sides: "./bin/herdr-picker" and "bin/herdr-picker" name the
 			// same file, and the assertion is about the directory and the binary
 			// name, not about the leading-dot spelling.
 			if got := path.Clean(e.Command[0]); got != want {

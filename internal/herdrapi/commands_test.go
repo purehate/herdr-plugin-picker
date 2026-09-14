@@ -76,28 +76,28 @@ func TestFocusPaneSkipsCurrentSteps(t *testing.T) {
 func TestPluginPaneOpenSplit(t *testing.T) {
 	run, calls := recorder()
 	err := (Client{Run: run}).PluginPaneOpen(OpenOpts{
-		Plugin:     "purehate.herdr-ssh",
+		Plugin:     "purehate.herdr-picker",
 		Entrypoint: "session",
 		Placement:  "split",
 		TargetPane: "w5:pA",
 		Direction:  "right",
-		Env:        map[string]string{"HERDR_SSH_TARGET": "nixos-dev"},
+		Env:        map[string]string{"HERDR_PICKER_TARGET": "nixos-dev"},
 		Focus:      true,
 	})
 	if err != nil {
 		t.Fatalf("PluginPaneOpen: %v", err)
 	}
 	assertArgv(t, *calls, []string{
-		"plugin pane open --plugin purehate.herdr-ssh --entrypoint session " +
+		"plugin pane open --plugin purehate.herdr-picker --entrypoint session " +
 			"--placement split --target-pane w5:pA --direction right " +
-			"--env HERDR_SSH_TARGET=nixos-dev --focus",
+			"--env HERDR_PICKER_TARGET=nixos-dev --focus",
 	})
 }
 
 func TestPluginPaneOpenTabOmitsDirection(t *testing.T) {
 	run, calls := recorder()
 	err := (Client{Run: run}).PluginPaneOpen(OpenOpts{
-		Plugin:     "purehate.herdr-ssh",
+		Plugin:     "purehate.herdr-picker",
 		Entrypoint: "session",
 		Placement:  "tab",
 		Direction:  "right",
@@ -135,7 +135,7 @@ func TestPluginPaneOpenTargetPaneFollowsPlacement(t *testing.T) {
 		t.Run(tc.placement, func(t *testing.T) {
 			run, calls := recorder()
 			err := (Client{Run: run}).PluginPaneOpen(OpenOpts{
-				Plugin:     "purehate.herdr-ssh",
+				Plugin:     "purehate.herdr-picker",
 				Entrypoint: "session",
 				Placement:  tc.placement,
 				TargetPane: "w5:pA",

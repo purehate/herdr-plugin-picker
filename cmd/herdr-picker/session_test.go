@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/purehate/herdr-plugin-ssh/internal/herdrapi"
-	"github.com/purehate/herdr-plugin-ssh/internal/pluginconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/herdrapi"
+	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
 )
 
 var errRenameTest = errors.New("rename failed")
@@ -179,7 +179,7 @@ func (s *readSpy) Read(p []byte) (int, error) {
 func sessionEnv(t *testing.T, target, path string) {
 	t.Helper()
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", "")
-	t.Setenv("HERDR_SSH_TARGET", target)
+	t.Setenv("HERDR_PICKER_TARGET", target)
 	t.Setenv("HERDR_PANE_ID", "")
 	t.Setenv("PATH", path)
 }
@@ -203,7 +203,7 @@ func TestRunSessionHoldsThePaneOnEveryFatalExit(t *testing.T) {
 			name:   "target missing",
 			target: "",
 			path:   badBinDir,
-			want:   "HERDR_SSH_TARGET is not set",
+			want:   "HERDR_PICKER_TARGET is not set",
 		},
 		{
 			name:   "ssh not on PATH",
@@ -285,7 +285,7 @@ func TestRunSessionReportsARejectedConfigBeforeItBlocks(t *testing.T) {
 	wantDiagnostics(t, screen.String(),
 		"split_direction",
 		"ignoring the rejected keys",
-		"HERDR_SSH_TARGET is not set",
+		"HERDR_PICKER_TARGET is not set",
 		"press enter to close",
 	)
 }
@@ -406,7 +406,7 @@ const (
 	// nil environment still runs the script, so an assertion that the variable
 	// is merely set-or-unset turns on whether the developer running the tests
 	// happens to have an agent.
-	authSockSentinel = "/tmp/herdr-ssh-test-agent.sock"
+	authSockSentinel = "/tmp/herdr-picker-test-agent.sock"
 )
 
 func TestSessionExecsSSHWithTheArgvAndEnvironmentItBuilt(t *testing.T) {
@@ -418,7 +418,7 @@ func TestSessionExecsSSHWithTheArgvAndEnvironmentItBuilt(t *testing.T) {
 	sshDir := fakeSSHDir(t)
 	code, stdout, stderr := runMain(t, "session",
 		"PATH="+sshDir,
-		"HERDR_SSH_TARGET=nixos-dev",
+		"HERDR_PICKER_TARGET=nixos-dev",
 		"HERDR_PANE_ID=",
 		"HERDR_PLUGIN_CONFIG_DIR="+cfg,
 		"SSH_AUTH_SOCK="+authSockSentinel,
@@ -471,7 +471,7 @@ func TestSessionKeepsTheValidKeysOfARejectedConfig(t *testing.T) {
 	cfg := pluginConfigDir(t, "probe = false\nssh_args = [\"-o\", \"ConnectTimeout=5\"]\nsplit_direction = \"sideways\"\n")
 	code, stdout, stderr := runMain(t, "session",
 		"PATH="+fakeSSHDir(t),
-		"HERDR_SSH_TARGET=nixos-dev",
+		"HERDR_PICKER_TARGET=nixos-dev",
 		"HERDR_PANE_ID=",
 		"HERDR_PLUGIN_CONFIG_DIR="+cfg,
 		"SSH_AUTH_SOCK="+authSockSentinel,

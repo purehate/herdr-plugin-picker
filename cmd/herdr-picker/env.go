@@ -40,8 +40,8 @@ func resolveHerdrConfigPath() string {
 }
 
 // resolvePluginConfigDir returns this plugin's config directory.
-// `herdr plugin config-dir purehate.herdr-ssh` answers
-// ~/.config/herdr/plugins/config/purehate.herdr-ssh on 0.9.0. pluginID supplies
+// `herdr plugin config-dir purehate.herdr-picker` answers
+// ~/.config/herdr/plugins/config/purehate.herdr-picker on 0.9.0. pluginID supplies
 // the last element so the path cannot drift from the manifest.
 func resolvePluginConfigDir() string {
 	if d := os.Getenv("HERDR_PLUGIN_CONFIG_DIR"); d != "" {

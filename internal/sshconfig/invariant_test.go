@@ -99,7 +99,7 @@ var parseInvariantCases = []parseInvariantCase{
 	},
 	{
 		// A directory rather than chmod 000, for the same reason the
-		// unreadable-primary test in cmd/herdr-ssh uses one: chmod 000 is still
+		// unreadable-primary test in cmd/herdr-picker uses one: chmod 000 is still
 		// readable as uid 0, so that fixture would skip on a root container and
 		// prove nothing there, while a directory fails the read for every uid.
 		// This is the include-unreadable downgrade, which is the parseIncludes
@@ -118,7 +118,7 @@ var parseInvariantCases = []parseInvariantCase{
 	},
 	{
 		// Absolute Include paths, here and above, so every row exercises the
-		// exported Parse — the function cmd/herdr-ssh actually calls — rather
+		// exported Parse — the function cmd/herdr-picker actually calls — rather
 		// than the unexported parse that the temp-dir fixtures in parse_test.go
 		// and include_test.go need in order to resolve relative includes.
 		// parseIncludes only joins includeBase onto a non-absolute pattern, so
@@ -140,7 +140,7 @@ var parseInvariantCases = []parseInvariantCase{
 // loop that produces warnings, and parseIncludes downgrades an unreadable,
 // cyclic or too-deep include into a Warning rather than propagating it — but
 // nothing enforced it, and the caller outside this package is written against
-// it. cmd/herdr-ssh/loadHosts takes the parsed hosts on one switch arm and
+// it. cmd/herdr-picker/loadHosts takes the parsed hosts on one switch arm and
 // reports err.Error() into the picker footer on another, then appends
 // w.String() for every warning regardless of which arm ran. That pairing
 // assumes the error arm yields neither: hosts, because it drops `found` on the
