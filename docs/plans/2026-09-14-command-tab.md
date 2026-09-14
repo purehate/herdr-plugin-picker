@@ -1,0 +1,72 @@
+# The command tab: one popup that does anything
+
+The five tabs this plugin ships are all nouns — a space, an agent, a tab, a
+pane, a host. Every one of them answers "take me there." None of them answers
+"do this." That is the gap between a picker and the thing this is meant to be:
+one floating popup an operator drives everything from, without leaving the
+keyboard and without memorising a keybinding per verb.
+
+## Why the socket makes this possible here and nowhere else
+
+Broadcast already established that the CLI exposes roughly thirty commands
+against the socket's 128, and that the picker can speak the socket. That
+groundwork pays off twice, because two of those 128 are:
+
+    plugin.action.list    { plugin_id? }   omit plugin_id for every plugin
+    plugin.action.invoke  { action_id, plugin_id?, context? }
+
+`plugin.action.list` with no `plugin_id` returns the actions of every installed
+plugin, each with a `title`, an `action_id`, and the `contexts` it is valid in.
+On the author's machine that is 42 actions across 13 plugins — including the
+actions of other pickers. `plugin.action.invoke` then runs any of them.
+
+There is no CLI equivalent. Every other command-palette plugin in the
+marketplace shells out to `herdr`, which caps them at the verbs the CLI
+happens to expose and blinds them to what else is installed. Reading the
+action list off the socket is the whole differentiator, and it is three
+requests of work because the socket client already exists.
+
+The practical consequence is that the tab is not a fixed menu. It is a
+projection of whatever the operator has installed, and it grows when they
+install something new without this plugin shipping a release.
+
+## What goes in the list
+
+Two sources, merged into one flat ranked list:
+
+- **Discovered plugin actions**, from `plugin.action.list`. Labelled with
+  their `title`, since plugin authors already wrote a human-readable one.
+- **Native verbs**, a hand-picked set of socket operations that are useful
+  to invoke by name — `pane.split`, `pane.zoom`, `tab.create`,
+  `workspace.rename`, `worktree.create`, `layout.apply`, and so on.
+
+Hand-picked rather than generated from the schema, because the 128 include
+events, getters, and plumbing (`pane.report_metadata`, `client_shell.surface.set`)
+that would bury the dozen verbs anyone actually wants. A generated list is a
+worse list.
+
+## Contexts decide what is shown, not what errors
+
+Actions carry `contexts` — `["pane"]`, `["workspace"]`, or absent for
+"anywhere". The tab filters to what is valid where the picker was opened from,
+rather than listing everything and letting the invoke fail. A palette that
+offers a verb it cannot run is worse than one that hides it, because the
+operator learns to distrust the list.
+
+## Ranking
+
+Frecency, reusing `internal/sshusage` rather than growing a second ranker. The
+ssh tab already learns which hosts an operator reaches for; the same decay
+applied to command ids puts `pane.split` above `server.reload_config` after a
+day of use without anyone configuring an order.
+
+This is worth noting as its own differentiator: of the 1114 plugins in the
+marketplace, zero mention frecency.
+
+## Destructive verbs
+
+`pane.close`, `workspace.close` and `server.stop` are in the native set and all
+three are irreversible from a popup that is about to disappear. They reuse the
+broadcast confirmation — the same y/n line, for the same reason. `server.stop`
+is excluded entirely: nothing about "kill the server I am running inside" is a
+picker's job.

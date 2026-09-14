@@ -67,12 +67,19 @@ type response struct {
 	Error  *Error          `json:"error"`
 }
 
-// call runs one request on its own connection. One connection per call keeps
-// replies unambiguous without tracking outstanding ids, which is the right
-// trade for a handful of sends rather than a streaming subscription.
+// call runs a request whose reply carries nothing worth reading.
 func (c Client) call(method string, params any) error {
+	_, err := c.callResult(method, params)
+	return err
+}
+
+// callResult runs one request on its own connection and hands back the raw
+// result. One connection per call keeps replies unambiguous without tracking
+// outstanding ids, which is the right trade for a handful of calls rather than
+// a streaming subscription.
+func (c Client) callResult(method string, params any) (json.RawMessage, error) {
 	if c.Path == "" {
-		return errors.New("herdr api: no socket path (HERDR_SOCKET_PATH unset)")
+		return nil, errors.New("herdr api: no socket path (HERDR_SOCKET_PATH unset)")
 	}
 	timeout := c.Timeout
 	if timeout <= 0 {
@@ -81,42 +88,42 @@ func (c Client) call(method string, params any) error {
 
 	conn, err := net.DialTimeout("unix", c.Path, timeout)
 	if err != nil {
-		return fmt.Errorf("herdr api: dial: %w", err)
+		return nil, fmt.Errorf("herdr api: dial: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 	// One deadline for the whole exchange, set before the write: a server that
 	// accepts and never reads would otherwise block here rather than at the read.
 	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
-		return fmt.Errorf("herdr api: deadline: %w", err)
+		return nil, fmt.Errorf("herdr api: deadline: %w", err)
 	}
 
 	id, err := requestID()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	body, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
 	if err != nil {
-		return fmt.Errorf("herdr api: encode %s: %w", method, err)
+		return nil, fmt.Errorf("herdr api: encode %s: %w", method, err)
 	}
 	if _, err := conn.Write(append(body, '\n')); err != nil {
-		return fmt.Errorf("herdr api: write %s: %w", method, err)
+		return nil, fmt.Errorf("herdr api: write %s: %w", method, err)
 	}
 
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
-		return fmt.Errorf("herdr api: read %s: %w", method, err)
+		return nil, fmt.Errorf("herdr api: read %s: %w", method, err)
 	}
 	var resp response
 	if err := json.Unmarshal(line, &resp); err != nil {
-		return fmt.Errorf("herdr api: decode %s: %w", method, err)
+		return nil, fmt.Errorf("herdr api: decode %s: %w", method, err)
 	}
 	if resp.ID != id {
-		return fmt.Errorf("herdr api: %s: reply id %q does not match request %q", method, resp.ID, id)
+		return nil, fmt.Errorf("herdr api: %s: reply id %q does not match request %q", method, resp.ID, id)
 	}
 	if resp.Error != nil {
-		return resp.Error
+		return nil, resp.Error
 	}
-	return nil
+	return resp.Result, nil
 }
 
 func requestID() (string, error) {
