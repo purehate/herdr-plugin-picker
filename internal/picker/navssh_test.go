@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/purehate/herdr-plugin-picker/internal/probe"
@@ -253,5 +254,46 @@ func TestSSHWarningsAreNotDrawnOnOtherTabs(t *testing.T) {
 	}
 	if strings.Contains(m.View().Content, "ssh-only warning") {
 		t.Fatalf("ssh warning leaked onto the spaces tab:\n%s", m.View().Content)
+	}
+}
+
+func TestLatencyLabelFormatting(t *testing.T) {
+	m := sshModel(sshFixture())
+	m.probed["web1"], m.up["web1"] = true, true
+	for _, tc := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{500 * time.Microsecond, "<1ms"},
+		{12 * time.Millisecond, "12ms"},
+		{999 * time.Millisecond, "999ms"},
+		{1500 * time.Millisecond, "1.5s"},
+		{0, ""},
+	} {
+		m.latency["web1"] = tc.d
+		if got := m.latencyLabel("web1"); got != tc.want {
+			t.Fatalf("latencyLabel(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+	// A host that was not reached has no latency to show, whatever the dial cost.
+	m.up["web1"] = false
+	m.latency["web1"] = 40 * time.Millisecond
+	if got := m.latencyLabel("web1"); got != "" {
+		t.Fatalf("latencyLabel for a down host = %q, want empty", got)
+	}
+}
+
+func TestSSHRowShowsLatencyOnlyWhenUp(t *testing.T) {
+	m := sshModel(sshFixture())
+	m.width, m.height = 70, 24
+	m.probed["web1"], m.up["web1"] = true, true
+	m.latency["web1"] = 12 * time.Millisecond
+	if view := m.View().Content; !strings.Contains(view, "12ms") {
+		t.Fatalf("latency not shown:\n%s", view)
+	}
+	m.probed["db-primary"], m.up["db-primary"] = true, false
+	m.latency["db-primary"] = 40 * time.Millisecond
+	if view := m.View().Content; strings.Contains(view, "40ms") {
+		t.Fatalf("latency shown for a down host:\n%s", view)
 	}
 }

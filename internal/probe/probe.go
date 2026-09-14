@@ -21,10 +21,13 @@ type Target struct {
 	Skip  bool
 }
 
-// Result reports one host's reachability.
+// Result reports one host's reachability. Latency is the dial's round-trip
+// time, set whether or not the dial succeeded; the picker only shows it for a
+// host that answered.
 type Result struct {
-	Alias string
-	Up    bool
+	Alias   string
+	Up      bool
+	Latency time.Duration
 }
 
 // dialFn dials one probe target. It is a named type because three call sites
@@ -82,14 +85,16 @@ func run(ctx context.Context, targets []Target, timeout time.Duration, dial dial
 			case <-ctx.Done():
 				return
 			}
+			start := time.Now()
 			conn, err := dial(ctx, timeout, t.Addr)
+			latency := time.Since(start)
 			if err == nil {
 				// The dial succeeding is the whole answer; a close error says
 				// nothing about reachability.
 				_ = conn.Close()
 			}
 			select {
-			case out <- Result{Alias: t.Alias, Up: err == nil}:
+			case out <- Result{Alias: t.Alias, Up: err == nil, Latency: latency}:
 			case <-ctx.Done():
 			}
 		}(t)

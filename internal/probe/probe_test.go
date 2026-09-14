@@ -313,3 +313,18 @@ func TestRunWithNoTargetsClosesImmediately(t *testing.T) {
 		t.Fatal("channel never closed")
 	}
 }
+
+// Latency is measured around the dial itself, so it reflects the time the
+// connection attempt took even when the attempt failed. The picker only shows
+// it for a host that answered, but the measurement must not depend on that.
+func TestRunReportsDialLatency(t *testing.T) {
+	dial := func(ctx context.Context, timeout time.Duration, addr string) (net.Conn, error) {
+		time.Sleep(20 * time.Millisecond)
+		return nil, errors.New("refused")
+	}
+	for r := range run(context.Background(), []Target{{Alias: "h", Addr: "x"}}, time.Second, dial) {
+		if r.Latency < 20*time.Millisecond {
+			t.Fatalf("latency = %v, want at least the 20ms the dial took", r.Latency)
+		}
+	}
+}

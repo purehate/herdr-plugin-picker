@@ -158,9 +158,10 @@ type navigatorModel struct {
 	// probed and up are maps, so probe writes are visible through every copy of
 	// the model that shares them. Safe because bubbletea holds one model and
 	// discards the predecessor on each Update.
-	probed map[string]bool
-	up     map[string]bool
-	chosen *NavSelection
+	probed  map[string]bool
+	up      map[string]bool
+	latency map[string]time.Duration
+	chosen  *NavSelection
 	// refreshErr is the last failed inventory read, kept so the footer can say
 	// the list on screen is stale rather than silently pretending it is current.
 	refreshErr error
@@ -213,6 +214,7 @@ func newNavigatorModel(o NavOptions) navigatorModel {
 		preview: o.ShowPreview,
 		probed:  map[string]bool{},
 		up:      map[string]bool{},
+		latency: map[string]time.Duration{},
 	}
 	return m.refilter()
 }
@@ -473,6 +475,7 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case probeMsg:
 		m.probed[msg.Alias] = true
 		m.up[msg.Alias] = msg.Up
+		m.latency[msg.Alias] = msg.Latency
 		return m, waitProbe(m.opts.Probes)
 	case probeClosedMsg:
 		return m, nil

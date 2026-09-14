@@ -201,6 +201,10 @@ A blank marker means one of two things and does not distinguish them — the pro
 has not answered yet, or this host is never probed at all (a `HostName` carrying
 a `%` token, below). The first resolves on its own; the second stays blank.
 
+The `●` marker carries the dial's round-trip time (`● 12ms`), so a host that
+answers slowly is visible before you connect. It is measured on the same dial
+that produced the marker, and shown only for a host that answered.
+
 ## Configuration
 
 Optional, at `~/.config/herdr/plugins/config/purehate.herdr-picker/config.toml`

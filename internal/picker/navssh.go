@@ -3,6 +3,7 @@ package picker
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
@@ -28,6 +29,30 @@ func sshNavItems(hosts []sshconfig.Host, query string) []NavItem {
 		})
 	}
 	return out
+}
+
+// markerCellWidth is the fixed width of the marker column: the glyph, a space,
+// and the widest latency ("999ms"). Fixed so the alias column does not shift as
+// probe results land, the same reason aliasColumnFor measures the whole set.
+const markerCellWidth = 7
+
+// latencyLabel formats a probe's round-trip time for the marker column, or ""
+// when the host was not reached. At most five characters, which is what
+// markerCellWidth reserves.
+func (m navigatorModel) latencyLabel(alias string) string {
+	if !m.probed[alias] || !m.up[alias] {
+		return ""
+	}
+	switch d := m.latency[alias]; {
+	case d <= 0:
+		return ""
+	case d < time.Millisecond:
+		return "<1ms"
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	default:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
 }
 
 // aliasColumnFor is the column every ssh row's detail half starts at, measured
@@ -110,7 +135,15 @@ func (m navigatorModel) renderSSHRows(s styles, selected lipgloss.Style, start, 
 		if pad < 2 {
 			pad = 2
 		}
-		line := pointer + markerStyle.Render(marker) + gap.Render(" ") +
+		cell := marker
+		if lat := m.latencyLabel(h.Alias); lat != "" {
+			cell += " " + lat
+		}
+		cellPad := markerCellWidth - lipgloss.Width(cell)
+		if cellPad < 0 {
+			cellPad = 0
+		}
+		line := pointer + markerStyle.Render(cell) + gap.Render(strings.Repeat(" ", cellPad+1)) +
 			alias + gap.Render(strings.Repeat(" ", pad)) + detail
 		if i == m.cursor {
 			line += selected.Render(strings.Repeat(" ", max(0, w-lipgloss.Width(line))))
