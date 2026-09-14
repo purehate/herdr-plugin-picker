@@ -73,10 +73,11 @@ func navItems(snapshot herdrapi.Snapshot) picker.NavRefresh {
 		label := navText(w.Label)
 		spaceLabels[w.ID] = label
 		spaces = append(spaces, picker.NavItem{
-			ID:      w.ID,
-			Label:   statusMark(w.Status) + " " + label,
-			Detail:  countLabel(w.TabCount, "tab") + " · " + countLabel(w.PaneCount, "pane"),
-			Current: w.Focused,
+			ID:          w.ID,
+			Label:       statusMark(w.Status) + " " + label,
+			Detail:      countLabel(w.TabCount, "tab") + " · " + countLabel(w.PaneCount, "pane"),
+			Current:     w.Focused,
+			WorkspaceID: w.ID,
 		})
 	}
 	agents := make([]picker.NavItem, 0, len(snapshot.Agents))
@@ -87,21 +88,24 @@ func navItems(snapshot herdrapi.Snapshot) picker.NavRefresh {
 		}
 		space := spaceLabels[a.WorkspaceID]
 		agents = append(agents, picker.NavItem{
-			ID:      a.PaneID,
-			Label:   statusMark(a.Status) + " " + navText(a.Name) + "  " + title,
-			Detail:  space + " · " + a.Status,
-			Search:  navText(a.CWD),
-			Current: a.Focused,
+			ID:          a.PaneID,
+			Label:       statusMark(a.Status) + " " + navText(a.Name) + "  " + title,
+			Detail:      space + " · " + a.Status,
+			Search:      navText(a.CWD),
+			Current:     a.Focused,
+			WorkspaceID: a.WorkspaceID,
+			CWD:         a.CWD,
 		})
 	}
 	sessions := make([]picker.NavItem, 0, len(snapshot.Tabs))
 	for _, t := range snapshot.Tabs {
 		space := spaceLabels[t.WorkspaceID]
 		sessions = append(sessions, picker.NavItem{
-			ID:      t.ID,
-			Label:   statusMark(t.Status) + " " + navText(t.Label),
-			Detail:  space + " · " + countLabel(t.PaneCount, "pane"),
-			Current: t.Focused,
+			ID:          t.ID,
+			Label:       statusMark(t.Status) + " " + navText(t.Label),
+			Detail:      space + " · " + countLabel(t.PaneCount, "pane"),
+			Current:     t.Focused,
+			WorkspaceID: t.WorkspaceID,
 		})
 	}
 	return picker.NavRefresh{Spaces: spaces, Agents: agents, Sessions: sessions}
@@ -205,6 +209,12 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 			return "", err
 		}
 		return info.Status, nil
+	}
+	// ^x builds the row's action menu; the picker owns the menu UI and this owns
+	// what each action does.
+	opts.Actions = navActions
+	opts.RunAction = func(section picker.NavSection, item picker.NavItem, actionID, text string) (string, error) {
+		return runNavAction(api, section, item, actionID, text)
 	}
 	// Only ask herdr for the session panes when reuse is on, for the reason the
 	// standalone picker gated it: the ▪ marker promises enter focuses the

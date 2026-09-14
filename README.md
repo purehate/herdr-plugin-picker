@@ -132,6 +132,7 @@ On every tab:
 | `↑` / `↓`, `^k` / `^j` | move the cursor                      |
 | `←` / `→`, Tab         | change tab                           |
 | `enter`                | jump to the row, or ssh in a split   |
+| `^x`                   | row actions (not on the ssh tab)     |
 | `esc`, `^c`            | close                                |
 
 Additional keys on the **ssh** tab:
@@ -154,6 +155,28 @@ input is sent, and the picker shows why rather than swallowing it.
 
 If you came from `fzf`, note that `^n` is a placement key here, not
 cursor-down — `^j` / `^k` move the cursor.
+
+## Actions
+
+`^x` opens a menu of actions for the row under the cursor on the spaces,
+agents, and sessions tabs. The ssh tab has none: a host is not a herdr object.
+`↑`/`↓` choose, Enter runs, Esc cancels.
+
+| Action            | On        | What it does                                     |
+| ----------------- | --------- | ------------------------------------------------ |
+| rename            | all three | renames the workspace, agent, or tab             |
+| new tab here      | all three | opens a tab in the same workspace                |
+| new workspace     | spaces    | opens a workspace                                |
+| close             | all three | closes the workspace, pane, or tab, after a y/n  |
+| copy id           | all three | copies the herdr id                              |
+| copy cwd          | agents    | copies the agent's working directory             |
+| open git worktree | agents    | opens the worktree the agent runs in             |
+
+Rename asks for the new name in a one-line input and close asks `y`/`n` first;
+nothing else prompts. Copy uses OSC 52, so it works over ssh and needs no
+`pbcopy` or `xclip` — a terminal that does not speak OSC 52 will simply not
+receive it. The result appears in the footer, and the live refresh picks up a
+rename or a close on its next tick.
 
 ## Markers
 
@@ -275,14 +298,16 @@ alias, in a pane herdr opens for it. Your config, your keys, your agent, your
 `known_hosts`, your proxy settings. If a host works by hand it works here, and
 failures read the same too.
 
-**Talks to herdr only through `$HERDR_BIN_PATH`** — snapshot, open, close,
-rename and focus panes, and read or prompt agents. There is no network client,
-no telemetry, and no other process it starts. While the picker is open it
-re-runs `herdr api snapshot` about once a second, so that one subprocess starts
-repeatedly for as long as the popup is on screen; closing the popup stops it.
-The agents tab preview runs `herdr agent read` for the selected agent, and `^p`
-submits text with `herdr agent prompt` — so pressing Enter in the prompt sends
-that text to the agent you selected.
+**Talks to herdr only through `$HERDR_BIN_PATH`** — snapshot, focus, rename,
+close, and create workspaces, tabs, and panes; worktree open; and read or prompt
+agents. There is no network client, no telemetry, and no other process it
+starts. While the picker is open it re-runs `herdr api snapshot` about once a
+second, so that one subprocess starts repeatedly for as long as the popup is on
+screen; closing the popup stops it. The agents tab preview runs `herdr agent
+read` for the selected agent, and `^p` submits text with `herdr agent prompt` —
+so pressing Enter in the prompt sends that text to the agent you selected. `^x`
+can rename or close what is on screen and open tabs, workspaces, and worktrees,
+all through herdr.
 
 Three direct dependencies, all Charm/TOML libraries, listed under
 [Development](#development). If you would rather read the code than this

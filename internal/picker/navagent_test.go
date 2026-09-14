@@ -77,7 +77,7 @@ func TestAgentPreviewFrameFitsAndReservesSpace(t *testing.T) {
 	if got := m.previewBlockLines(); got != 1+defaultPreviewLines {
 		t.Fatalf("reserved preview lines = %d, want %d", got, 1+defaultPreviewLines)
 	}
-	next, _ = m.Update(navAgentReadMsg{target: m.selectedAgentID(), text: "line1\nline2\nline3"})
+	next, _ = m.Update(navAgentReadMsg{target: m.selectedItemID(), text: "line1\nline2\nline3"})
 	m = next.(navigatorModel)
 	view := m.View().Content
 	if got := len(strings.Split(view, "\n")); got != 28 {
@@ -101,7 +101,7 @@ func TestPromptOpensTypesAndSends(t *testing.T) {
 	m := agentsModel(o)
 	m.width, m.height = 60, 28
 	m = navKey(m, 'p', "", tea.ModCtrl)
-	if !m.prompting {
+	if !m.inputOpen {
 		t.Fatal("^p did not open the prompt")
 	}
 	for _, r := range "go" {
@@ -112,8 +112,8 @@ func TestPromptOpensTypesAndSends(t *testing.T) {
 	}
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = next.(navigatorModel)
-	if m.prompting || cmd == nil {
-		t.Fatalf("enter did not submit: prompting=%v cmd=%v", m.prompting, cmd)
+	if m.inputOpen || cmd == nil {
+		t.Fatalf("enter did not submit: inputOpen=%v cmd=%v", m.inputOpen, cmd)
 	}
 	msg := cmd().(navPromptMsg)
 	if msg.target != "a1" || gotTarget != "a1" || gotText != "go" || msg.status != "working" {
@@ -134,8 +134,8 @@ func TestPromptEscCancels(t *testing.T) {
 	m = navKey(m, 'p', "", tea.ModCtrl)
 	m = navKey(m, 'x', "x", 0)
 	m = navKey(m, tea.KeyEsc, "", 0)
-	if m.prompting || m.promptInput != "" {
-		t.Fatalf("esc left prompting=%v input=%q", m.prompting, m.promptInput)
+	if m.inputOpen || m.inputText != "" {
+		t.Fatalf("esc left inputOpen=%v input=%q", m.inputOpen, m.inputText)
 	}
 }
 
@@ -151,7 +151,7 @@ func TestPromptEmptyInputDoesNotSend(t *testing.T) {
 	if cmd != nil || called {
 		t.Fatalf("empty prompt sent: cmd=%v called=%v", cmd, called)
 	}
-	if m.prompting {
+	if m.inputOpen {
 		t.Fatal("empty prompt left the input open")
 	}
 }
@@ -161,7 +161,7 @@ func TestPromptInertOffAgentsTabAndWithoutCallback(t *testing.T) {
 	o.AgentPrompt = func(string, string) (string, error) { return "working", nil }
 	m := newNavigatorModel(o) // spaces
 	m = navKey(m, 'p', "", tea.ModCtrl)
-	if m.prompting {
+	if m.inputOpen {
 		t.Fatal("^p opened the prompt on the spaces tab")
 	}
 
@@ -169,7 +169,7 @@ func TestPromptInertOffAgentsTabAndWithoutCallback(t *testing.T) {
 	o2.Agents = []NavItem{{ID: "a1", Label: "one"}}
 	m2 := agentsModel(o2) // AgentPrompt nil
 	m2 = navKey(m2, 'p', "", tea.ModCtrl)
-	if m2.prompting {
+	if m2.inputOpen {
 		t.Fatal("^p opened the prompt with no AgentPrompt callback")
 	}
 }
@@ -190,8 +190,8 @@ func TestPromptErrorIsSurfaced(t *testing.T) {
 	m = next.(navigatorModel)
 	next, _ = m.Update(cmd().(navPromptErrMsg))
 	m = next.(navigatorModel)
-	if m.promptErr == nil || !strings.Contains(m.View().Content, "agent a1 is blocked") {
-		t.Fatalf("error not surfaced: %v\n%s", m.promptErr, m.View().Content)
+	if !m.noteErr || !strings.Contains(m.View().Content, "agent a1 is blocked") {
+		t.Fatalf("error not surfaced: %v\n%s", m.note, m.View().Content)
 	}
 }
 

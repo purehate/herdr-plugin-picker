@@ -72,6 +72,12 @@ type NavItem struct {
 	Host        sshconfig.Host
 	AliasPos    []int
 	HostNamePos []int
+
+	// WorkspaceID and CWD are the owning workspace and working directory, for
+	// the ^x actions that need them: a new tab in the same workspace, or opening
+	// the worktree the agent runs in. Both are empty on tabs and spaces.
+	WorkspaceID string
+	CWD         string
 }
 
 // NavRefresh is the set of server-backed lists the picker rebuilds on each
@@ -110,6 +116,14 @@ type NavOptions struct {
 	// ↓ does not fire one herdr subprocess per row. Zero means
 	// defaultPreviewDebounce.
 	PreviewDebounce time.Duration
+
+	// Actions builds the ^x menu for a row, or nil to disable the menu. The
+	// picker owns the menu, input, and confirm UI; the action list and what each
+	// action does live with the caller.
+	Actions func(section NavSection, item NavItem) []NavAction
+	// RunAction executes actionID for a row, with text for the actions that
+	// collect it, and returns a short status line for the footer.
+	RunAction func(section NavSection, item NavItem, actionID, text string) (string, error)
 
 	// Hosts is the ssh config inventory, rendered as the ssh tab.
 	Hosts []sshconfig.Host
@@ -158,16 +172,39 @@ type navigatorModel struct {
 	agentPreviewFor string
 	agentPreviewErr error
 
-	// prompting is true while ^p's one-line input is open. promptTarget is the
-	// pane the text goes to, captured when the input opened so a cursor move
-	// mid-typing cannot redirect it. promptNoteFor scopes the last send's note to
-	// the agent it belongs to, so it is not shown under a different row.
-	prompting     bool
-	promptInput   string
-	promptTarget  string
-	promptNoteFor string
-	promptStatus  string
-	promptErr     error
+	// menuActions is the ^x action list for the row it was opened on, and
+	// menuCursor the highlighted action. menuItem and menuSection capture the row
+	// so a refresh moving the cursor cannot retarget a chosen action.
+	menuActions []NavAction
+	menuCursor  int
+	menuItem    NavItem
+	menuSection NavSection
+
+	// inputOpen is a one-line text entry: an agent prompt when inputAction is
+	// empty, otherwise a rename action awaiting its text. The row and section are
+	// captured when it opens so a cursor move mid-typing cannot redirect it.
+	inputOpen    bool
+	inputLabel   string
+	inputText    string
+	inputTarget  string
+	inputAction  string
+	inputItem    NavItem
+	inputSection NavSection
+
+	// confirmOpen is an action awaiting a y/n, captured with the row it applies
+	// to. confirmQuestion is what the footer asks.
+	confirmOpen     bool
+	confirmAction   NavAction
+	confirmItem     NavItem
+	confirmSection  NavSection
+	confirmQuestion string
+
+	// note is the last prompt or action outcome, scoped to noteFor so it is not
+	// shown under a different row. noteErr selects the warning styling and keeps
+	// a failure visible even after the cursor moves on.
+	note    string
+	noteFor string
+	noteErr bool
 }
 
 func newNavigatorModel(o NavOptions) navigatorModel {
@@ -408,7 +445,7 @@ func (m *navigatorModel) startAgentPreview() tea.Cmd {
 	if m.section != NavAgents || m.opts.AgentRead == nil {
 		return nil
 	}
-	target := m.selectedAgentID()
+	target := m.selectedItemID()
 	if target == "" || target == m.agentPreviewFor {
 		return nil
 	}
@@ -457,18 +494,28 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.agentPreviewErr = msg.err
 		return m, nil
 	case navPromptMsg:
-		m.promptNoteFor = msg.target
-		m.promptStatus = "sent · " + msg.status
-		m.promptErr = nil
+		m.noteFor = msg.target
+		m.note = "sent · " + msg.status
+		m.noteErr = false
 		m.agentPreviewFor = "" // force a re-read now the agent has new output
 		return m, nil
 	case navPromptErrMsg:
-		m.promptNoteFor = msg.target
-		m.promptStatus = ""
-		m.promptErr = msg.err
+		m.noteFor = msg.target
+		m.note = oneLine(msg.err.Error())
+		m.noteErr = true
+		return m, nil
+	case navActionMsg:
+		m.noteFor = msg.forID
+		m.note = msg.status
+		m.noteErr = false
+		return m, nil
+	case navActionErrMsg:
+		m.noteFor = msg.forID
+		m.note = oneLine(msg.err.Error())
+		m.noteErr = true
 		return m, nil
 	case tea.MouseClickMsg:
-		if m.prompting || msg.Button != tea.MouseLeft {
+		if m.inputOpen || m.confirmOpen || m.menuActions != nil || msg.Button != tea.MouseLeft {
 			break
 		}
 		x, y := msg.X, msg.Y
@@ -514,8 +561,13 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.move(1), nil
 		}
 	case tea.KeyPressMsg:
-		if m.prompting {
-			return m.promptKey(msg)
+		switch {
+		case m.confirmOpen:
+			return m.confirmKey(msg)
+		case m.inputOpen:
+			return m.inputKey(msg)
+		case m.menuActions != nil:
+			return m.menuKey(msg)
 		}
 		if msg.Mod&tea.ModCtrl != 0 {
 			return m.handleCtrl(msg)
@@ -579,77 +631,11 @@ func (m navigatorModel) handleCtrl(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case 'n':
 		return m.chooseSSH("split", true)
 	case 'p':
-		return m.openPrompt()
+		return m.openPromptInput()
+	case 'x':
+		return m.openMenu()
 	}
 	return m, nil
-}
-
-// openPrompt starts the one-line prompt input on the agents tab. The target is
-// captured now, so moving the cursor while typing cannot redirect the text to a
-// different agent.
-func (m navigatorModel) openPrompt() (tea.Model, tea.Cmd) {
-	if m.section != NavAgents || m.opts.AgentPrompt == nil {
-		return m, nil
-	}
-	target := m.selectedAgentID()
-	if target == "" {
-		return m, nil
-	}
-	m.prompting = true
-	m.promptInput = ""
-	m.promptTarget = target
-	m.promptNoteFor = ""
-	m.promptStatus = ""
-	m.promptErr = nil
-	return m, nil
-}
-
-// promptKey routes keys into the prompt input while it is open. Esc cancels and
-// ^c still quits; every other printable rune is appended, so the search query
-// and the section keys stay out of the way until the prompt closes.
-func (m navigatorModel) promptKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch k.Code {
-	case tea.KeyEsc:
-		m.prompting = false
-		m.promptInput = ""
-		return m, nil
-	case tea.KeyEnter:
-		return m.submitPrompt()
-	case tea.KeyBackspace:
-		if r := []rune(m.promptInput); len(r) > 0 {
-			m.promptInput = string(r[:len(r)-1])
-		}
-		return m, nil
-	}
-	if k.Mod&tea.ModCtrl != 0 {
-		if k.Code == 'c' {
-			return m, tea.Quit
-		}
-		return m, nil
-	}
-	if k.Text != "" {
-		m.promptInput += k.Text
-	}
-	return m, nil
-}
-
-// submitPrompt sends the typed text and closes the input. An empty input is a
-// no-op rather than a cancel: ^p then enter by accident must not send a blank
-// line to an agent.
-func (m navigatorModel) submitPrompt() (tea.Model, tea.Cmd) {
-	text := strings.TrimSpace(m.promptInput)
-	if text == "" {
-		m.prompting = false
-		return m, nil
-	}
-	target := m.promptTarget
-	m.prompting = false
-	m.promptInput = ""
-	m.promptTarget = ""
-	m.promptNoteFor = target
-	m.promptStatus = "sending…"
-	m.promptErr = nil
-	return m, m.promptCmd(target, text)
 }
 
 func (m navigatorModel) promptCmd(target, text string) tea.Cmd {
@@ -767,6 +753,8 @@ func (m navigatorModel) View() tea.View {
 		"",
 	}
 	switch {
+	case m.menuActions != nil:
+		lines = append(lines, m.renderMenu(s, selected, rows, w)...)
 	case len(m.items) == 0:
 		lines = append(lines, frameIndent+s.muted.Render(m.emptyMessage()))
 	case m.section == NavSSH:
@@ -831,17 +819,25 @@ func (m navigatorModel) emptyMessage() string {
 }
 
 func (m navigatorModel) footerHints(s styles) string {
+	switch {
+	case m.confirmOpen:
+		return frameIndent + s.muted.Render("y confirm   n cancel")
+	case m.menuActions != nil:
+		return frameIndent + s.muted.Render("↑↓ choose   ↵ run   esc cancel")
+	case m.inputOpen:
+		// The action line carries the prompt, so the hints stay to the keys.
+		return frameIndent + s.muted.Render("↵ send   esc cancel")
+	}
 	hints := "↑↓ select   ←→/tab section   ^u clear"
 	if m.section == NavSSH {
 		hints = "↑↓ select   ←→/tab section   ^o preview   ^u clear"
 	}
-	if m.promptNoteFor != "" && m.promptNoteFor == m.selectedAgentID() {
-		switch {
-		case m.promptStatus != "":
-			hints += "   ✓ " + m.promptStatus
-		case m.promptErr != nil:
-			hints += "   ⚠ " + oneLine(m.promptErr.Error())
+	if m.note != "" && (m.noteErr || m.noteFor == m.selectedItemID()) {
+		mark := "✓ "
+		if m.noteErr {
+			mark = "⚠ "
 		}
+		hints += "   " + mark + m.note
 	}
 	if m.refreshErr != nil {
 		hints += "   ⚠ refresh failed"
@@ -850,19 +846,28 @@ func (m navigatorModel) footerHints(s styles) string {
 }
 
 func (m navigatorModel) footerActions(s styles, selected lipgloss.Style) string {
-	if m.prompting {
-		return frameIndent + s.accent.Render("prompt ") + s.text.Render(m.promptInput+"▏") +
-			s.muted.Render("   ↵ send   esc cancel")
+	if m.inputOpen {
+		return frameIndent + s.accent.Render(m.inputLabel+" ") + s.text.Render(m.inputText+"▏")
+	}
+	if m.confirmOpen {
+		return frameIndent + s.muted.Render(m.confirmQuestion)
+	}
+	if m.menuActions != nil {
+		return frameIndent + selected.Render(" ↵ run ") + s.muted.Render("   esc cancel")
 	}
 	if m.section == NavSSH {
 		return frameIndent + s.muted.Render("^t tab   ^z zoom   ^n new") +
 			"   " + selected.Render(" ↵ split ") + s.muted.Render("   esc close")
 	}
+	actions := ""
+	if m.opts.Actions != nil {
+		actions = s.muted.Render("^x actions") + "   "
+	}
 	if m.section == NavAgents && m.opts.AgentPrompt != nil {
-		return frameIndent + s.muted.Render("^p prompt") + "   " +
+		return frameIndent + actions + s.muted.Render("^p prompt") + "   " +
 			selected.Render(navJumpLabel) + s.muted.Render("   "+navCloseLabel)
 	}
-	return frameIndent + selected.Render(navJumpLabel) + s.muted.Render("   "+navCloseLabel)
+	return frameIndent + actions + selected.Render(navJumpLabel) + s.muted.Render("   "+navCloseLabel)
 }
 
 // Herdr's own Settings dialog paints the accent as a background. The SSH

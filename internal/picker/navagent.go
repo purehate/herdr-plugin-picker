@@ -5,15 +5,6 @@ import "strings"
 // navagent.go is the agents tab's preview and prompt: the output tail drawn
 // under the list, and the one-line input ^p opens.
 
-// selectedAgentID is the pane id of the row under the cursor, or "" when there
-// is none.
-func (m navigatorModel) selectedAgentID() string {
-	if m.cursor < 0 || m.cursor >= len(m.items) {
-		return ""
-	}
-	return m.items[m.cursor].ID
-}
-
 func (m navigatorModel) agentPreviewRequestLines() int {
 	if m.opts.PreviewLines > 0 {
 		return m.opts.PreviewLines
@@ -25,7 +16,7 @@ func (m navigatorModel) agentPreviewRequestLines() int {
 // block at all. The block is reserved before the first read lands, so the list
 // does not jump every time the cursor moves.
 func (m navigatorModel) agentPreviewVisible() bool {
-	return m.section == NavAgents && m.opts.AgentRead != nil && m.selectedAgentID() != ""
+	return m.section == NavAgents && m.opts.AgentRead != nil && m.selectedItemID() != ""
 }
 
 // agentPreviewHeight is the preview's body height: the requested line count,
