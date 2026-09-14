@@ -58,6 +58,14 @@ type InvocationContext struct {
 	InvocationSource string `json:"invocation_source,omitempty"`
 }
 
+// Invoke runs a socket operation by name and discards its result, for the
+// native verbs in the command tab. Params are the caller's to get right: the
+// schema is the contract, and wrapping each of five verbs in its own method
+// would be five methods to describe what one map already says.
+func (c Client) Invoke(method string, params map[string]any) error {
+	return c.call(method, params)
+}
+
 // InvokeAction runs another plugin's action.
 func (c Client) InvokeAction(a Action, ctx InvocationContext) error {
 	return c.call("plugin.action.invoke", map[string]any{

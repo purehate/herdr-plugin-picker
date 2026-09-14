@@ -13,7 +13,7 @@ It stays a popup on purpose. It floats over your layout, does its one job, and
 gets out of the way — it never takes a pane hostage to show you a list.
 
 ```
-   spaces  agents  sessions  panes  ssh
+   spaces  agents  sessions  panes  ssh  cmd
   ──────────────────────────────────────────────────────────────────────────────────────────
   / ▏
 
@@ -64,7 +64,7 @@ goto = "prefix+shift+j"
 key = "prefix+g"
 type = "plugin_action"
 command = "purehate.herdr-picker.open-navigator"
-description = "spaces, agents, sessions, panes, ssh"
+description = "spaces, agents, sessions, panes, ssh, cmd"
 ```
 
 That is the whole binding — no paths, nothing machine-specific. The floating
@@ -92,6 +92,9 @@ switching tabs clears the query.
 - **panes** lists every pane across every workspace, with what is running in it
   and where. `space` marks panes and `^b` sends one command to all of them.
 - **ssh** lists the hosts in `~/.ssh/config` and opens one.
+- **cmd** lists every verb you can invoke by name: a handful of built-in
+  Herdr operations, plus every action each of your *other* installed plugins
+  exposes. Enter runs the selected one.
 
 On the first four, Enter jumps to the selected workspace, agent, tab, or pane. The
 inventory re-reads `herdr api snapshot` about once a second while the popup is
@@ -114,6 +117,23 @@ On **ssh**, Enter opens a session in a split, `^t` in a new tab, `^z` in a
 zoomed pane, and `^n` forces a new pane even when a session for that host is
 already open. Type to fuzzy-filter on alias, then hostname; `^o` toggles the
 host preview. See [Markers](#markers) and [Keys](#keys).
+
+On **cmd**, Enter invokes the selected verb and closes the popup. The list is
+two things merged: a few built-in Herdr operations (split, zoom, new tab, new
+workspace), and every action your other installed plugins expose — their own
+titles, read live from the running server. Install another plugin and its
+actions appear here next time you open the picker, with nothing to configure.
+
+This is the one thing here that a CLI-based plugin cannot do. `herdr` the
+command exposes roughly thirty operations; the socket API exposes 128, and two
+of them — `plugin.action.list` and `plugin.action.invoke` — are how one plugin
+enumerates and runs another's actions. On the author's machine that turns into
+46 rows: 5 built-in verbs and 41 actions across 13 other plugins.
+
+Verbs act where *you* were, not where the popup is: a split splits the pane you
+opened the picker from. This plugin's own actions are left out of its own list.
+If the socket is unavailable the tab still shows the built-in verbs, and if a
+plugin action cannot be listed the footer says so.
 
 With a mouse, click tabs to switch, click a row to act, or use the wheel to
 scroll. The footer's primary action and Close are clickable too.
@@ -138,7 +158,7 @@ On every tab:
 | `^u`                   | clear the query                    |
 | `↑` / `↓`, `^k` / `^j` | move the cursor                    |
 | `←` / `→`, Tab         | change tab                         |
-| `enter`                | jump to the row, or ssh in a split |
+| `enter`                | jump to the row, ssh in a split, or run the command |
 | `^x`                   | row actions (not on the ssh tab)   |
 | `space`                | mark the row (panes and ssh tabs)  |
 | `esc`, `^c`            | close                              |
@@ -387,14 +407,24 @@ so pressing Enter in the prompt sends that text to the agent you selected. `^x`
 can rename or close what is on screen and open tabs, workspaces, and worktrees,
 all through herdr.
 
-**One thing does not go through the CLI: `^b`.** Broadcast connects to herdr's
-own unix socket at `$HERDR_SOCKET_PATH` and calls `pane.send_text`, because no
-CLI command writes to a plain shell — `agent send-keys` reaches agents only.
-That socket is herdr's, set by herdr for its own plugins; the picker dials it,
-writes one JSON line per pane, reads one line back, and closes. It is the only
-socket in the plugin besides the reachability probe, and the only place the
-picker writes into a pane you did not ask it to open. Nothing is sent without
-the `y`/`n` you answer first.
+**Two things do not go through the CLI: `^b` and the cmd tab.** Both use
+herdr's own unix socket at `$HERDR_SOCKET_PATH` — herdr's socket, set by herdr
+for its own plugins. The picker dials it, writes one JSON line, reads one line
+back, and closes.
+
+Broadcast calls `pane.send_text`, because no CLI command writes to a plain
+shell — `agent send-keys` reaches agents only. It is the only place the picker
+writes into a pane you did not ask it to open, and nothing is sent without the
+`y`/`n` you answer first.
+
+The cmd tab calls `plugin.action.list` when it opens, which returns the actions
+your other installed plugins declare in their manifests, and
+`plugin.action.invoke` when you pick one. Invoking runs *that* plugin's command,
+as your user, exactly as pressing its own keybinding would — the picker is
+choosing it, not sandboxing it, so the cmd tab is worth trusting only as far as
+you trust the plugins you installed. Titles from other manifests are stripped
+of terminal control sequences before being drawn. Nothing on that tab runs
+until you press Enter on it.
 
 Three direct dependencies, all Charm/TOML libraries, listed under
 [Development](#development). If you would rather read the code than this

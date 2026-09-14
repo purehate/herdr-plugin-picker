@@ -1,6 +1,6 @@
 id = "purehate.herdr-picker"
 name = "Picker"
-version = "0.4.0"
+version = "0.5.0"
 
 # 0.9.0 is the only version this has been built and run against, and the field
 # is pure gatekeeping — herdr refuses to link or install when the minimum is
@@ -20,7 +20,7 @@ version = "0.4.0"
 # untested compatibility claim. Lower it when someone has actually run the
 # picker on that version, not before.
 min_herdr_version = "0.9.0"
-description = "Floating keyboard-driven popup: jump to any space, agent, tab or pane, broadcast one command to every marked pane, SSH from ~/.ssh/config with live reachability."
+description = "Floating keyboard-driven popup: jump to any space, agent, tab or pane, broadcast one command to every marked pane, SSH from ~/.ssh/config with live reachability, and run any action from any installed plugin."
 platforms = ["macos", "linux"]
 
 [[build]]

@@ -47,21 +47,45 @@ worse list.
 
 ## Contexts decide what is shown, not what errors
 
-Actions carry `contexts` — `["pane"]`, `["workspace"]`, or absent for
-"anywhere". The tab filters to what is valid where the picker was opened from,
-rather than listing everything and letting the invoke fail. A palette that
-offers a verb it cannot run is worse than one that hides it, because the
-operator learns to distrust the list.
+Actions carry `contexts`, and there are three that matter, not two: `pane`,
+`workspace`, and `global`. Absent means "anywhere". Counted across the 42
+actions installed on the author's machine:
 
-## Ranking
+    ["pane","workspace"]   11
+    ["global"]             11
+    ["workspace"]          10
+    (absent)                4
+    ["pane"]                3
+    ["global","workspace"]  3
 
-Frecency, reusing `internal/sshusage` rather than growing a second ranker. The
-ssh tab already learns which hosts an operator reaches for; the same decay
-applied to command ids puts `pane.split` above `server.reload_config` after a
-day of use without anyone configuring an order.
+The tab filters to what the picker can satisfy rather than listing everything
+and letting the invoke fail, because a row that is offered and then refused
+teaches the operator to distrust the list. But "what the picker can satisfy" is
+all three: it runs as a popup pane, inside a workspace, and `global` asks for no
+id at all.
 
-This is worth noting as its own differentiator: of the 1114 plugins in the
-marketplace, zero mention frecency.
+This was worth counting rather than assuming. Filtering to `pane` and
+`workspace` alone — which is what "the context the picker was opened from"
+sounds like it means — silently dropped eleven of the forty-one actions, and
+they were the best ones: every pane-navigation and resize verb `herdr-splits`
+exposes declares `global`.
+
+## Ranking — not yet
+
+The first cut orders the list statically: native verbs first, then plugin
+actions by plugin id and action id. That is predictable, which is the property
+that matters before muscle memory exists, and the fuzzy query does the real
+work of getting to a row.
+
+Frecency is the intended next step, reusing `internal/sshusage` rather than
+growing a second ranker. The ssh tab already learns which hosts an operator
+reaches for; the same decay applied to command ids would put `pane.split` above
+`workspace.create` after a day of use without anyone configuring an order. It
+is deliberately not in the first cut: a list that reorders itself while someone
+is still learning what is in it is harder to learn, not easier.
+
+Worth noting as its own differentiator when it lands: of the 1114 plugins in
+the marketplace, zero mention frecency.
 
 ## Destructive verbs
 

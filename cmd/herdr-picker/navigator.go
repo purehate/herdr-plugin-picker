@@ -255,14 +255,28 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 		}
 		return navItems(fresh, freshPanes, selfPane), nil
 	}
-	// ^b is opt-in by presence, like the agent callbacks above. Without the
-	// socket there is no way to type into a plain shell, so the key stays dead
-	// rather than failing once per pane after the operator has committed.
-	if sock := herdrsock.New(); sock.Available() {
+	// Both of the socket's affordances are opt-in by presence, like the agent
+	// callbacks below. Without the socket there is no way to type into a plain
+	// shell and no way to learn what the other plugins expose, so ^b stays dead
+	// and the cmd tab lists only the native verbs rather than failing after the
+	// operator has committed.
+	sock := herdrsock.New()
+	if sock.Available() {
 		opts.Broadcast = func(paneIDs []string, text string) (string, error) {
 			return broadcastText(sock, paneIDs, text)
 		}
 	}
+	// One read, at open: the action list changes when a plugin is installed,
+	// not while the popup is up. A failure costs the plugin actions and keeps
+	// the native verbs, which is the same bargain the pane list makes.
+	var actions []herdrsock.Action
+	if sock.Available() {
+		var actErr error
+		if actions, actErr = sock.Actions(); actErr != nil {
+			_, _ = fmt.Fprintf(out, "herdr-picker: could not list plugin actions: %v\n", actErr)
+		}
+	}
+	opts.Commands = navCommandItems(actions, pickerContexts, pluginID)
 	// The agents tab previews the selected agent's output and ^p prompts it.
 	// Both are opt-in by presence: a nil callback hides the affordance.
 	opts.AgentRead = func(paneID string, lines int) (string, error) {
@@ -303,6 +317,15 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	}
 	if sel.Section == picker.NavSSH {
 		return openHosts(out, api, cfg, sel, resolveCaller(pickerCaller()))
+	}
+	// A command acts where the operator was, so it takes the resolved caller
+	// like a jump does, rather than the popup's own ids.
+	if sel.Section == picker.NavCommands {
+		if err := runCommand(sock, sel.Item.ID, resolveCaller(pickerCaller())); err != nil {
+			_, _ = fmt.Fprintln(out)
+			return fatalInPane(out, in, err)
+		}
+		return nil
 	}
 	if err := focusNavigatorSelection(api, sel, resolveCaller(pickerCaller())); err != nil {
 		_, _ = fmt.Fprintln(out)

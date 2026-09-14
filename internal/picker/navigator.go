@@ -23,10 +23,11 @@ const (
 	NavSessions
 	NavPanes
 	NavSSH
+	NavCommands
 	navSectionCount
 )
 
-var navNames = [...]string{"spaces", "agents", "sessions", "panes", "ssh"}
+var navNames = [...]string{"spaces", "agents", "sessions", "panes", "ssh", "cmd"}
 
 const (
 	navJumpLabel  = " ↵ jump "
@@ -103,6 +104,16 @@ type NavOptions struct {
 	Agents   []NavItem
 	Sessions []NavItem
 	Panes    []NavItem
+
+	// Commands is the cmd tab: every verb the operator can invoke by name
+	// rather than by remembering which key is bound to it. The picker ranks and
+	// draws them; running one is the caller's job, reached the way every other
+	// tab reaches its verb — Enter closes the popup and hands the row back.
+	//
+	// Deliberately absent from NavRefresh: the list changes when a plugin is
+	// installed, not while a popup is open, and re-reading it every tick would
+	// spend a socket round trip per second to learn nothing.
+	Commands []NavItem
 
 	// Broadcast sends text to every pane id, and returns a short status line for
 	// the footer. nil disables the panes tab's ^b. The text arrives exactly as
@@ -256,6 +267,8 @@ func (m navigatorModel) source() []NavItem {
 		return m.opts.Sessions
 	case NavPanes:
 		return m.opts.Panes
+	case NavCommands:
+		return m.opts.Commands
 	default:
 		return sshNavItems(m.opts.Hosts, "")
 	}
