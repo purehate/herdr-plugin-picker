@@ -2,12 +2,15 @@
 
 [![ci](https://github.com/purehate/herdr-plugin-picker/actions/workflows/ci.yml/badge.svg)](https://github.com/purehate/herdr-plugin-picker/actions/workflows/ci.yml)
 
-One floating fuzzy picker over Herdr spaces, agents, open tabs, panes, and the
-hosts in your `~/.ssh/config`. The first four jump you to something already
-running; the `ssh` tab opens a session in a new pane, tab, or zoomed pane; the
-`panes` tab also broadcasts one command to every pane you mark. Modeled on
-tmux's `sesh` picker, `setw synchronize-panes`, and Herdr's own settings
-dialog.
+One floating popup you drive from the keyboard, over everything Herdr is
+running. Jump to any space, agent, open tab, or pane; **broadcast one command
+to every pane you mark**; and SSH out of your real `~/.ssh/config` — `Include`s
+expanded, `ProxyJump` followed, **each host probed so you can see what is
+actually up before you connect**. Modeled on tmux's `sesh` picker, `setw
+synchronize-panes`, and Herdr's own settings dialog.
+
+It stays a popup on purpose. It floats over your layout, does its one job, and
+gets out of the way — it never takes a pane hostage to show you a list.
 
 ```
    spaces  agents  sessions  panes  ssh
@@ -127,28 +130,28 @@ rather than a dialog.
 
 On every tab:
 
-| Key                    | Action                               |
-| ---------------------- | ------------------------------------ |
-| type                   | fuzzy filter on the current list     |
-| `backspace`            | delete the last character            |
-| `^w`                   | delete the last word of the query    |
-| `^u`                   | clear the query                      |
-| `↑` / `↓`, `^k` / `^j` | move the cursor                      |
-| `←` / `→`, Tab         | change tab                           |
-| `enter`                | jump to the row, or ssh in a split   |
-| `^x`                   | row actions (not on the ssh tab)     |
-| `space`                | mark the row (panes and ssh tabs)    |
-| `esc`, `^c`            | close                                |
+| Key                    | Action                             |
+| ---------------------- | ---------------------------------- |
+| type                   | fuzzy filter on the current list   |
+| `backspace`            | delete the last character          |
+| `^w`                   | delete the last word of the query  |
+| `^u`                   | clear the query                    |
+| `↑` / `↓`, `^k` / `^j` | move the cursor                    |
+| `←` / `→`, Tab         | change tab                         |
+| `enter`                | jump to the row, or ssh in a split |
+| `^x`                   | row actions (not on the ssh tab)   |
+| `space`                | mark the row (panes and ssh tabs)  |
+| `esc`, `^c`            | close                              |
 
 Additional keys on the **ssh** tab:
 
-| Key         | Action                               |
-| ----------- | ------------------------------------ |
-| `^t`        | ssh in a new tab                     |
-| `^z`        | ssh in a zoomed pane                 |
-| `^n`        | force a new pane even if one exists  |
-| `^o`        | toggle the host preview              |
-| `space`     | mark the host; Enter opens all marked |
+| Key     | Action                                |
+| ------- | ------------------------------------- |
+| `^t`    | ssh in a new tab                      |
+| `^z`    | ssh in a zoomed pane                  |
+| `^n`    | force a new pane even if one exists   |
+| `^o`    | toggle the host preview               |
+| `space` | mark the host; Enter opens all marked |
 
 `space` marks a host and steps down, so several can be marked in a row. The
 footer shows the count, Enter opens them all with the chosen placement, and Esc
@@ -158,11 +161,11 @@ is only a mark key on the ssh tab; elsewhere it is an ordinary query character.
 
 Additional keys on the **panes** tab:
 
-| Key     | Action                                       |
-| ------- | -------------------------------------------- |
-| `space` | mark the pane                                |
-| `^a`    | mark every listed pane; again to clear       |
-| `^b`    | send one command to every marked pane        |
+| Key     | Action                                 |
+| ------- | -------------------------------------- |
+| `space` | mark the pane                          |
+| `^a`    | mark every listed pane; again to clear |
+| `^b`    | send one command to every marked pane  |
 
 `^b` opens a one-line input. Enter asks `y`/`n` naming the command and the pane
 count, and only `y` sends it — it is many writes to live shells and nothing
@@ -178,8 +181,8 @@ pane after you have confirmed.
 
 Additional keys on the **agents** tab:
 
-| Key  | Action                                |
-| ---- | ------------------------------------- |
+| Key  | Action                                  |
+| ---- | --------------------------------------- |
 | `^p` | type a prompt; Enter sends, Esc cancels |
 
 A prompt to an agent that is already blocked is rejected by herdr before any
@@ -194,15 +197,15 @@ cursor-down — `^j` / `^k` move the cursor.
 agents, and sessions tabs. The ssh tab has none: a host is not a herdr object.
 `↑`/`↓` choose, Enter runs, Esc cancels.
 
-| Action            | On        | What it does                                     |
-| ----------------- | --------- | ------------------------------------------------ |
-| rename            | all three | renames the workspace, agent, or tab             |
-| new tab here      | all three | opens a tab in the same workspace                |
-| new workspace     | spaces    | opens a workspace                                |
-| close             | all three | closes the workspace, pane, or tab, after a y/n  |
-| copy id           | all three | copies the herdr id                              |
-| copy cwd          | agents    | copies the agent's working directory             |
-| open git worktree | agents    | opens the worktree the agent runs in             |
+| Action            | On        | What it does                                    |
+| ----------------- | --------- | ----------------------------------------------- |
+| rename            | all three | renames the workspace, agent, or tab            |
+| new tab here      | all three | opens a tab in the same workspace               |
+| new workspace     | spaces    | opens a workspace                               |
+| close             | all three | closes the workspace, pane, or tab, after a y/n |
+| copy id           | all three | copies the herdr id                             |
+| copy cwd          | agents    | copies the agent's working directory            |
+| open git worktree | agents    | opens the worktree the agent runs in            |
 
 Rename asks for the new name in a one-line input and close asks `y`/`n` first;
 nothing else prompts. Copy uses OSC 52, so it works over ssh and needs no
@@ -214,25 +217,25 @@ rename or a close on its next tick.
 
 The **panes** tab's first column, per pane:
 
-| Marker  | Meaning                                       |
-| ------- | --------------------------------------------- |
-| ▪       | the pane you are in                           |
-| ◉       | an agent waiting on you                       |
-| ●       | an agent working                              |
-| ○       | an agent idle or done                         |
-| (blank) | a plain shell                                 |
+| Marker  | Meaning                 |
+| ------- | ----------------------- |
+| ▪       | the pane you are in     |
+| ◉       | an agent waiting on you |
+| ●       | an agent working        |
+| ○       | an agent idle or done   |
+| (blank) | a plain shell           |
 
 A marked pane is shown with `▣` to the left of the row.
 
 The **ssh** tab's first column, per host:
 
-| Marker  | Meaning                                       |
-| ------- | --------------------------------------------- |
-| ▪       | a session for this host is already open       |
-| ●       | port reachable                                |
-| ○       | port not reachable                            |
-| ~       | proxied, deliberately not probed              |
-| (blank) | not probed yet, or never probed               |
+| Marker  | Meaning                                 |
+| ------- | --------------------------------------- |
+| ▪       | a session for this host is already open |
+| ●       | port reachable                          |
+| ○       | port not reachable                      |
+| ~       | proxied, deliberately not probed        |
+| (blank) | not probed yet, or never probed         |
 
 Hosts behind a `ProxyJump` or `ProxyCommand` are not probed — a direct dial
 would test the wrong network and report a false "down". `▪` wins over the
