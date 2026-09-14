@@ -194,6 +194,18 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 		}
 		return navItems(fresh), nil
 	}
+	// The agents tab previews the selected agent's output and ^p prompts it.
+	// Both are opt-in by presence: a nil callback hides the affordance.
+	opts.AgentRead = func(paneID string, lines int) (string, error) {
+		return api.AgentRead(paneID, "recent-unwrapped", lines)
+	}
+	opts.AgentPrompt = func(paneID, text string) (string, error) {
+		info, err := api.AgentPrompt(paneID, text)
+		if err != nil {
+			return "", err
+		}
+		return info.Status, nil
+	}
 	// Only ask herdr for the session panes when reuse is on, for the reason the
 	// standalone picker gated it: the ▪ marker promises enter focuses the
 	// existing session, a promise only the reuse branch can keep.

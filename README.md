@@ -79,7 +79,9 @@ The picker opens on **spaces**. `←`/`→` or Tab/Shift-Tab change tabs, and
 switching tabs clears the query.
 
 - **spaces** lists workspaces, with their tab and pane counts.
-- **agents** lists recognized agent panes, with their workspace and status.
+- **agents** lists recognized agent panes, with their workspace and status. The
+  selected agent's recent output is previewed below the list, and `^p` opens a
+  one-line prompt to send it a message.
 - **sessions** lists the open tabs in the current Herdr server. Here
   "sessions" means tabs, not separate named Herdr servers.
 - **ssh** lists the hosts in `~/.ssh/config` and opens one.
@@ -89,10 +91,17 @@ inventory re-reads `herdr api snapshot` about once a second while the popup is
 open, so newly created spaces, agents, and tabs appear without reopening it;
 the cursor stays on the row it was on and the query is kept. Blocked agents
 sort to the top so the ones waiting on you come first. If a read fails, the
-footer says `⚠ refresh failed` and the last good list stays on screen. It reads
-only the metadata in `herdr api snapshot` and invokes Herdr's own workspace,
-agent, or tab focus command; it does not read agent conversations or create
-panes.
+footer says `⚠ refresh failed` and the last good list stays on screen.
+
+On **agents**, the selected agent's recent terminal output is previewed below
+the list, and `^p` opens a one-line prompt that Enter sends and Esc cancels.
+The preview reads `herdr agent read`; a prompt goes through `herdr agent
+prompt`, which herdr refuses for an already-blocked agent rather than sending
+input. Neither reads the agent's session file.
+
+It reads only the metadata in `herdr api snapshot` and invokes Herdr's own
+workspace, agent, or tab focus command; it does not create panes on the first
+three tabs.
 
 On **ssh**, Enter opens a session in a split, `^t` in a new tab, `^z` in a
 zoomed pane, and `^n` forces a new pane even when a session for that host is
@@ -133,6 +142,15 @@ Additional keys on the **ssh** tab:
 | `^z`        | ssh in a zoomed pane                 |
 | `^n`        | force a new pane even if one exists  |
 | `^o`        | toggle the host preview              |
+
+Additional keys on the **agents** tab:
+
+| Key  | Action                                |
+| ---- | ------------------------------------- |
+| `^p` | type a prompt; Enter sends, Esc cancels |
+
+A prompt to an agent that is already blocked is rejected by herdr before any
+input is sent, and the picker shows why rather than swallowing it.
 
 If you came from `fzf`, note that `^n` is a placement key here, not
 cursor-down — `^j` / `^k` move the cursor.
@@ -258,10 +276,13 @@ alias, in a pane herdr opens for it. Your config, your keys, your agent, your
 failures read the same too.
 
 **Talks to herdr only through `$HERDR_BIN_PATH`** — snapshot, open, close,
-rename and focus panes. There is no network client, no telemetry, and no other
-process it starts. While the picker is open it re-runs `herdr api snapshot`
-about once a second, so that one subprocess starts repeatedly for as long as the
-popup is on screen; closing the popup stops it.
+rename and focus panes, and read or prompt agents. There is no network client,
+no telemetry, and no other process it starts. While the picker is open it
+re-runs `herdr api snapshot` about once a second, so that one subprocess starts
+repeatedly for as long as the popup is on screen; closing the popup stops it.
+The agents tab preview runs `herdr agent read` for the selected agent, and `^p`
+submits text with `herdr agent prompt` — so pressing Enter in the prompt sends
+that text to the agent you selected.
 
 Three direct dependencies, all Charm/TOML libraries, listed under
 [Development](#development). If you would rather read the code than this

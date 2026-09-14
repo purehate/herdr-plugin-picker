@@ -48,6 +48,16 @@ const (
 // not dominate the popup's lifetime.
 const defaultRefreshInterval = time.Second
 
+const (
+	// defaultPreviewLines is how many lines of agent output the agents tab
+	// preview shows, and how many it reserves so the list does not jump as a
+	// read lands.
+	defaultPreviewLines = 8
+	// defaultPreviewDebounce is the pause after a cursor move before the read
+	// fires, long enough to skip the rows a held ↓ passes through.
+	defaultPreviewDebounce = 150 * time.Millisecond
+)
+
 // NavItem is display metadata plus the opaque Herdr ID used when selected. For
 // the ssh tab, Host carries the parsed config entry the row opens and the
 // position slices are the runes the query matched, so the row highlights them
@@ -86,6 +96,20 @@ type NavOptions struct {
 	Refresh func() (NavRefresh, error)
 	// RefreshInterval is the tick period; zero means defaultRefreshInterval.
 	RefreshInterval time.Duration
+
+	// AgentRead fetches the tail of an agent pane's terminal output for the
+	// agents tab preview. nil disables the preview.
+	AgentRead func(paneID string, lines int) (string, error)
+	// AgentPrompt submits text to an agent and reports the agent's state after
+	// herdr observed it settle. nil disables the ^p prompt affordance.
+	AgentPrompt func(paneID, text string) (status string, err error)
+	// PreviewLines is how many lines of agent output the preview requests and
+	// reserves. Zero means defaultPreviewLines.
+	PreviewLines int
+	// PreviewDebounce delays the agent read after the cursor moves, so holding
+	// ↓ does not fire one herdr subprocess per row. Zero means
+	// defaultPreviewDebounce.
+	PreviewDebounce time.Duration
 
 	// Hosts is the ssh config inventory, rendered as the ssh tab.
 	Hosts []sshconfig.Host
@@ -126,6 +150,24 @@ type navigatorModel struct {
 	// refreshErr is the last failed inventory read, kept so the footer can say
 	// the list on screen is stale rather than silently pretending it is current.
 	refreshErr error
+
+	// agentPreview is the tail of the selected agent's output; agentPreviewFor
+	// is the pane id it belongs to, so a read that lands after the cursor moved
+	// is recognized as stale. agentPreviewErr is that read's failure.
+	agentPreview    string
+	agentPreviewFor string
+	agentPreviewErr error
+
+	// prompting is true while ^p's one-line input is open. promptTarget is the
+	// pane the text goes to, captured when the input opened so a cursor move
+	// mid-typing cannot redirect it. promptNoteFor scopes the last send's note to
+	// the agent it belongs to, so it is not shown under a different row.
+	prompting     bool
+	promptInput   string
+	promptTarget  string
+	promptNoteFor string
+	promptStatus  string
+	promptErr     error
 }
 
 func newNavigatorModel(o NavOptions) navigatorModel {
@@ -304,6 +346,23 @@ type navTickMsg struct{}
 type navRefreshMsg NavRefresh
 type navRefreshErrMsg struct{ err error }
 
+// navAgentReadMsg carries one agent output read, tagged with the pane it was
+// requested for so a late result can be recognized as stale. navPromptMsg and
+// navPromptErrMsg carry a submitted prompt's outcome.
+type navAgentReadMsg struct {
+	target string
+	text   string
+	err    error
+}
+type navPromptMsg struct {
+	target string
+	status string
+}
+type navPromptErrMsg struct {
+	target string
+	err    error
+}
+
 // navTick waits d and then asks for one refresh. Ticks are re-armed when a
 // refresh completes, not when it starts, so a herdr call slower than the
 // interval cannot queue ticks behind it.
@@ -330,6 +389,47 @@ func (m navigatorModel) interval() time.Duration {
 }
 
 func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	m = next.(navigatorModel)
+	// One place watches the selected agent change and starts a preview read,
+	// rather than every cursor-moving branch remembering to.
+	if preview := m.startAgentPreview(); preview != nil {
+		cmd = tea.Batch(cmd, preview)
+	}
+	return m, cmd
+}
+
+// startAgentPreview mutates Update's local model and returns the debounced read
+// to run when the selected agent differs from the one already shown. It records
+// the target immediately, so the tick is not re-armed on every message while the
+// cursor sits still, and a result for a target the cursor has left is discarded
+// on arrival.
+func (m *navigatorModel) startAgentPreview() tea.Cmd {
+	if m.section != NavAgents || m.opts.AgentRead == nil {
+		return nil
+	}
+	target := m.selectedAgentID()
+	if target == "" || target == m.agentPreviewFor {
+		return nil
+	}
+	m.agentPreviewFor = target
+	m.agentPreview = ""
+	m.agentPreviewErr = nil
+	read := m.opts.AgentRead
+	lines := m.agentPreviewRequestLines()
+	delay := m.opts.PreviewDebounce
+	if delay <= 0 {
+		delay = defaultPreviewDebounce
+	}
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		text, err := read(target, lines)
+		return navAgentReadMsg{target: target, text: text, err: err}
+	})
+}
+
+// update is the real message handler. Update wraps it so the preview watch runs
+// once, after every message, instead of in each branch.
+func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -349,8 +449,26 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case navRefreshErrMsg:
 		m.refreshErr = msg.err
 		return m, navTick(m.interval())
+	case navAgentReadMsg:
+		if msg.target != m.agentPreviewFor {
+			return m, nil // the cursor moved on; this read is stale
+		}
+		m.agentPreview = msg.text
+		m.agentPreviewErr = msg.err
+		return m, nil
+	case navPromptMsg:
+		m.promptNoteFor = msg.target
+		m.promptStatus = "sent · " + msg.status
+		m.promptErr = nil
+		m.agentPreviewFor = "" // force a re-read now the agent has new output
+		return m, nil
+	case navPromptErrMsg:
+		m.promptNoteFor = msg.target
+		m.promptStatus = ""
+		m.promptErr = msg.err
+		return m, nil
 	case tea.MouseClickMsg:
-		if msg.Button != tea.MouseLeft {
+		if m.prompting || msg.Button != tea.MouseLeft {
 			break
 		}
 		x, y := msg.X, msg.Y
@@ -396,6 +514,9 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.move(1), nil
 		}
 	case tea.KeyPressMsg:
+		if m.prompting {
+			return m.promptKey(msg)
+		}
 		if msg.Mod&tea.ModCtrl != 0 {
 			return m.handleCtrl(msg)
 		}
@@ -457,8 +578,89 @@ func (m navigatorModel) handleCtrl(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.chooseSSH("zoomed", false)
 	case 'n':
 		return m.chooseSSH("split", true)
+	case 'p':
+		return m.openPrompt()
 	}
 	return m, nil
+}
+
+// openPrompt starts the one-line prompt input on the agents tab. The target is
+// captured now, so moving the cursor while typing cannot redirect the text to a
+// different agent.
+func (m navigatorModel) openPrompt() (tea.Model, tea.Cmd) {
+	if m.section != NavAgents || m.opts.AgentPrompt == nil {
+		return m, nil
+	}
+	target := m.selectedAgentID()
+	if target == "" {
+		return m, nil
+	}
+	m.prompting = true
+	m.promptInput = ""
+	m.promptTarget = target
+	m.promptNoteFor = ""
+	m.promptStatus = ""
+	m.promptErr = nil
+	return m, nil
+}
+
+// promptKey routes keys into the prompt input while it is open. Esc cancels and
+// ^c still quits; every other printable rune is appended, so the search query
+// and the section keys stay out of the way until the prompt closes.
+func (m navigatorModel) promptKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch k.Code {
+	case tea.KeyEsc:
+		m.prompting = false
+		m.promptInput = ""
+		return m, nil
+	case tea.KeyEnter:
+		return m.submitPrompt()
+	case tea.KeyBackspace:
+		if r := []rune(m.promptInput); len(r) > 0 {
+			m.promptInput = string(r[:len(r)-1])
+		}
+		return m, nil
+	}
+	if k.Mod&tea.ModCtrl != 0 {
+		if k.Code == 'c' {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	if k.Text != "" {
+		m.promptInput += k.Text
+	}
+	return m, nil
+}
+
+// submitPrompt sends the typed text and closes the input. An empty input is a
+// no-op rather than a cancel: ^p then enter by accident must not send a blank
+// line to an agent.
+func (m navigatorModel) submitPrompt() (tea.Model, tea.Cmd) {
+	text := strings.TrimSpace(m.promptInput)
+	if text == "" {
+		m.prompting = false
+		return m, nil
+	}
+	target := m.promptTarget
+	m.prompting = false
+	m.promptInput = ""
+	m.promptTarget = ""
+	m.promptNoteFor = target
+	m.promptStatus = "sending…"
+	m.promptErr = nil
+	return m, m.promptCmd(target, text)
+}
+
+func (m navigatorModel) promptCmd(target, text string) tea.Cmd {
+	prompt := m.opts.AgentPrompt
+	return func() tea.Msg {
+		status, err := prompt(target, text)
+		if err != nil {
+			return navPromptErrMsg{target: target, err: err}
+		}
+		return navPromptMsg{target: target, status: status}
+	}
 }
 
 func (m navigatorModel) choose() (tea.Model, tea.Cmd) {
@@ -498,11 +700,35 @@ func (m navigatorModel) size() (int, int) {
 
 func (m navigatorModel) listWindow() (start, rows int) {
 	_, h := m.size()
-	rows = max(1, h-navHeaderRows-navFooterRows-m.sshPreviewLines()-m.warningLines())
+	rows = max(1, h-navHeaderRows-navFooterRows-m.previewBlockLines()-m.warningLines())
 	if m.cursor >= rows {
 		start = m.cursor - rows + 1
 	}
 	return start, rows
+}
+
+// previewBlockLines is the rows the active section's preview occupies. Only the
+// ssh and agents tabs have one.
+func (m navigatorModel) previewBlockLines() int {
+	switch m.section {
+	case NavSSH:
+		return m.sshPreviewLines()
+	case NavAgents:
+		return m.agentPreviewLines()
+	default:
+		return 0
+	}
+}
+
+func (m navigatorModel) renderPreviewBlock(s styles) []string {
+	switch m.section {
+	case NavSSH:
+		return m.renderSSHPreview(s)
+	case NavAgents:
+		return m.renderAgentPreview(s)
+	default:
+		return nil
+	}
 }
 
 func (m navigatorModel) move(delta int) navigatorModel {
@@ -568,12 +794,12 @@ func (m navigatorModel) View() tea.View {
 			}
 		}
 	}
-	if m.section == NavSSH {
-		lines = append(lines, m.renderSSHPreview(s)...)
+	if preview := m.renderPreviewBlock(s); len(preview) > 0 {
+		lines = append(lines, preview...)
 	}
-	// Pad after the preview so it hugs the last host row and the footer stays
+	// Pad after the preview so it hugs the last row and the footer stays
 	// anchored to the bottom of the popup, the way every other tab's footer is.
-	for len(lines) < navHeaderRows+rows+m.sshPreviewLines() {
+	for len(lines) < navHeaderRows+rows+m.previewBlockLines() {
 		lines = append(lines, "")
 	}
 	lines = append(lines,
@@ -609,6 +835,14 @@ func (m navigatorModel) footerHints(s styles) string {
 	if m.section == NavSSH {
 		hints = "↑↓ select   ←→/tab section   ^o preview   ^u clear"
 	}
+	if m.promptNoteFor != "" && m.promptNoteFor == m.selectedAgentID() {
+		switch {
+		case m.promptStatus != "":
+			hints += "   ✓ " + m.promptStatus
+		case m.promptErr != nil:
+			hints += "   ⚠ " + oneLine(m.promptErr.Error())
+		}
+	}
 	if m.refreshErr != nil {
 		hints += "   ⚠ refresh failed"
 	}
@@ -616,9 +850,17 @@ func (m navigatorModel) footerHints(s styles) string {
 }
 
 func (m navigatorModel) footerActions(s styles, selected lipgloss.Style) string {
+	if m.prompting {
+		return frameIndent + s.accent.Render("prompt ") + s.text.Render(m.promptInput+"▏") +
+			s.muted.Render("   ↵ send   esc cancel")
+	}
 	if m.section == NavSSH {
 		return frameIndent + s.muted.Render("^t tab   ^z zoom   ^n new") +
 			"   " + selected.Render(" ↵ split ") + s.muted.Render("   esc close")
+	}
+	if m.section == NavAgents && m.opts.AgentPrompt != nil {
+		return frameIndent + s.muted.Render("^p prompt") + "   " +
+			selected.Render(navJumpLabel) + s.muted.Render("   "+navCloseLabel)
 	}
 	return frameIndent + selected.Render(navJumpLabel) + s.muted.Render("   "+navCloseLabel)
 }
