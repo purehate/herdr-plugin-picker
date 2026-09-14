@@ -382,3 +382,13 @@ func TestLoadReadsPinned(t *testing.T) {
 		t.Fatalf("Pinned = %v, want %v", cfg.Pinned, want)
 	}
 }
+
+func TestLoadReadsMosh(t *testing.T) {
+	cfg, err := LoadDir(writeConfig(t, "mosh = true\n"))
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if !cfg.Mosh {
+		t.Fatal("Mosh = false, want true")
+	}
+}

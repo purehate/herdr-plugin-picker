@@ -505,3 +505,45 @@ func TestFatalInPaneLeavesTheCauseMatchable(t *testing.T) {
 		t.Errorf("Error() = %q, want it unchanged at %q", err.Error(), cause.Error())
 	}
 }
+
+func TestSessionCommandUsesSSHByDefault(t *testing.T) {
+	if got := sessionCommand(pluginconfig.Defaults(), "web1"); strings.Join(got, " ") != "ssh -- web1" {
+		t.Fatalf("argv = %v, want ssh", got)
+	}
+}
+
+func TestSessionCommandUsesMoshWhenConfigured(t *testing.T) {
+	cfg := pluginconfig.Defaults()
+	cfg.Mosh = true
+	if got := sessionCommand(cfg, "web1"); strings.Join(got, " ") != "mosh -- web1" {
+		t.Fatalf("argv = %v, want mosh", got)
+	}
+}
+
+// mosh takes the ssh command as one --ssh string, so the configured flags are
+// joined into it rather than appended as separate arguments.
+func TestMoshArgvHandsSSHFlagsToMosh(t *testing.T) {
+	cfg := pluginconfig.Defaults()
+	cfg.Mosh = true
+	cfg.SSHArgs = []string{"-o", "ConnectTimeout=5"}
+	got := sessionCommand(cfg, "web1")
+	want := "mosh --ssh=ssh -o ConnectTimeout=5 -- web1"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("argv = %q, want %q", strings.Join(got, " "), want)
+	}
+}
+
+func TestPrepareSessionUsesMoshWhenConfigured(t *testing.T) {
+	cfg := pluginconfig.Defaults()
+	cfg.Mosh = true
+	api := herdrapi.Client{Run: func([]string) ([]byte, error) {
+		return []byte(`{"id":1,"result":{}}`), nil
+	}}
+	argv, err := prepareSession(io.Discard, api, cfg, "nixos-dev", "w5:pC")
+	if err != nil {
+		t.Fatalf("prepareSession: %v", err)
+	}
+	if got, want := strings.Join(argv, " "), "mosh -- nixos-dev"; got != want {
+		t.Fatalf("argv = %q, want %q", got, want)
+	}
+}

@@ -35,6 +35,8 @@ type Config struct {
 	SSHArgs        []string `toml:"ssh_args"`
 	// Pinned aliases sort above the rest on the ssh tab, in the order listed.
 	Pinned []string `toml:"pinned"`
+	// Mosh opens sessions with mosh instead of ssh.
+	Mosh bool `toml:"mosh"`
 }
 
 // Defaults returns the configuration used when no file is present.

@@ -224,6 +224,7 @@ reuse_panes = true            # focus an existing ssh:<host> pane instead of ope
 hidden = []                   # globs matched against the alias
 ssh_args = []                 # non-routing flags passed to ssh before the destination
 pinned = []                   # aliases to keep at the top of the ssh tab
+mosh = false                  # open sessions with mosh instead of ssh
 ```
 
 `ssh_args` accepts ordinary client options such as `-v`, `-A`, or
@@ -233,6 +234,11 @@ a visible warning, as are options that run a command on your machine
 (`-o LocalCommand`, `PermitLocalCommand`, `KnownHostsCommand`). Put those
 settings in `~/.ssh/config`; otherwise the preview and probe could describe one
 destination while `ssh` connects to another.
+
+`mosh = true` opens sessions with `mosh` instead of `ssh`, which keeps them
+alive across roaming and sleep. mosh must be installed locally and on the host.
+The configured `ssh_args` are handed to mosh's own ssh via `--ssh`, so `-v` or
+an identity option still reaches the connection mosh makes.
 
 The **ssh** tab orders hosts by `pinned`, then by how often and how recently
 you have opened them, then by config order. Typing a query still decides — the

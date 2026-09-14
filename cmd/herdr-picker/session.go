@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	"github.com/purehate/herdr-plugin-picker/internal/herdrapi"
@@ -31,6 +32,27 @@ func sessionArgv(sshArgs []string, alias string) []string {
 	return append(argv, "--", alias)
 }
 
+// sessionCommand picks the client for a host. mosh sets up its own ssh
+// connection and then keeps the session alive across roaming and sleep; the
+// configured ssh flags are handed to mosh's own ssh rather than dropped, so
+// -v or an identity option still reaches the connection mosh makes.
+func sessionCommand(cfg pluginconfig.Config, alias string) []string {
+	if cfg.Mosh {
+		return moshArgv(cfg.SSHArgs, alias)
+	}
+	return sessionArgv(cfg.SSHArgs, alias)
+}
+
+// moshArgv builds mosh's argv. mosh takes the ssh command as one string via
+// --ssh, so the configured flags are joined into it rather than appended.
+func moshArgv(sshArgs []string, alias string) []string {
+	argv := []string{"mosh"}
+	if len(sshArgs) > 0 {
+		argv = append(argv, "--ssh="+strings.Join(append([]string{"ssh"}, sshArgs...), " "))
+	}
+	return append(argv, "--", alias)
+}
+
 // prepareSession labels this pane so the picker can find it again, then returns
 // the argv to exec. A rename failure is logged to out and ignored: losing pane
 // reuse is much cheaper than losing the connection the operator asked for.
@@ -43,7 +65,7 @@ func prepareSession(out io.Writer, api herdrapi.Client, cfg pluginconfig.Config,
 			_, _ = fmt.Fprintf(out, "herdr-picker: could not label pane: %v\n", err)
 		}
 	}
-	return sessionArgv(cfg.SSHArgs, alias), nil
+	return sessionCommand(cfg, alias), nil
 }
 
 // errReported marks an error whose message fatalInPane has already put on the
