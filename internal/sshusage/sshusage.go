@@ -71,9 +71,9 @@ func save(path string, usage map[string]Usage) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name()) // no-op once the rename below succeeds
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op once the rename below succeeds
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close() // the write error is the one worth reporting
 		return err
 	}
 	if err := tmp.Close(); err != nil {

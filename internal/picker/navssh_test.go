@@ -361,7 +361,7 @@ func TestSSHEscClearsMarksBeforeClosing(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("esc cleared marks but also quit")
 	}
-	next, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc with no marks did not close")
 	}
