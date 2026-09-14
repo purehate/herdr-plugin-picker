@@ -276,7 +276,9 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 			_, _ = fmt.Fprintf(out, "herdr-picker: could not list plugin actions: %v\n", actErr)
 		}
 	}
-	opts.Commands = navCommandItems(actions, pickerContexts, pluginID)
+	opts.Commands = orderCommands(
+		navCommandItems(actions, pickerContexts, pluginID),
+		sshusage.Load(commandUsagePath()), time.Now())
 	// The agents tab previews the selected agent's output and ^p prompts it.
 	// Both are opt-in by presence: a nil callback hides the affordance.
 	opts.AgentRead = func(paneID string, lines int) (string, error) {
@@ -325,6 +327,9 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 			_, _ = fmt.Fprintln(out)
 			return fatalInPane(out, in, err)
 		}
+		// Recorded only after it ran, so a command that herdr refused does not
+		// climb the list for next time.
+		recordCommandUse(out, sel.Item.ID)
 		return nil
 	}
 	if err := focusNavigatorSelection(api, sel, resolveCaller(pickerCaller())); err != nil {

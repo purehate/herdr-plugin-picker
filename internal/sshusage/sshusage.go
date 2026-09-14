@@ -1,5 +1,9 @@
-// Package sshusage records how often each ssh host is opened, so the picker can
-// rank the hosts the operator actually uses above the ones they merely have.
+// Package sshusage records how often something is reached for, so the picker
+// can rank what the operator actually uses above what they merely have.
+//
+// It is named for its first caller, the ssh tab. Everything but Order is keyed
+// by a plain string and is reused by the cmd tab against its own file; Order is
+// the only part that knows about hosts.
 package sshusage
 
 import (
@@ -67,7 +71,7 @@ func save(path string, usage map[string]Usage) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".ssh-usage-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".usage-*.tmp")
 	if err != nil {
 		return err
 	}

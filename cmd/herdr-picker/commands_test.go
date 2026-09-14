@@ -3,8 +3,10 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/purehate/herdr-plugin-picker/internal/herdrsock"
+	"github.com/purehate/herdr-plugin-picker/internal/sshusage"
 )
 
 func commandIDs(t *testing.T, actions []herdrsock.Action) []string {
@@ -183,5 +185,55 @@ func TestRunCommandRejectsAnUnknownID(t *testing.T) {
 	err := runCommand(herdrsock.Client{Path: "/nonexistent"}, "native:nope", caller{})
 	if err == nil || !strings.Contains(err.Error(), "unknown command") {
 		t.Errorf("err = %v, want an unknown command", err)
+	}
+}
+
+func TestOrderCommandsFloatsWhatGetsRun(t *testing.T) {
+	now := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	items := navCommandItems([]herdrsock.Action{
+		{PluginID: "zz.other", ActionID: "rename", Title: "Rename tab"},
+	}, pickerContexts, pluginID)
+
+	usage := map[string]sshusage.Usage{
+		"plugin:zz.other/rename": {Count: 9, LastUsed: now.Add(-time.Hour).Unix()},
+	}
+	got := orderCommands(items, usage, now)
+	if got[0].ID != "plugin:zz.other/rename" {
+		t.Errorf("first row = %q, want the one with a history", got[0].ID)
+	}
+	if len(got) != len(items) {
+		t.Errorf("got %d rows, want %d", len(got), len(items))
+	}
+}
+
+// Rows nobody has run keep navCommandItems' order: native verbs in their
+// declared order, then plugin actions by id. An untouched cmd tab must look the
+// same every time it opens.
+func TestOrderCommandsLeavesUnusedRowsAlone(t *testing.T) {
+	items := navCommandItems([]herdrsock.Action{
+		{PluginID: "zz.other", ActionID: "rename", Title: "Rename tab"},
+		{PluginID: "aa.other", ActionID: "split", Title: "Split"},
+	}, pickerContexts, pluginID)
+
+	got := orderCommands(items, map[string]sshusage.Usage{}, time.Now())
+	for i := range items {
+		if got[i].ID != items[i].ID {
+			t.Fatalf("row %d = %q, want %q", i, got[i].ID, items[i].ID)
+		}
+	}
+}
+
+func TestOrderCommandsDoesNotModifyItsInput(t *testing.T) {
+	now := time.Now()
+	items := navCommandItems(nil, pickerContexts, pluginID)
+	first := items[0].ID
+	last := items[len(items)-1].ID
+
+	orderCommands(items, map[string]sshusage.Usage{
+		last: {Count: 40, LastUsed: now.Unix()},
+	}, now)
+
+	if items[0].ID != first {
+		t.Errorf("input was reordered: first row is now %q, want %q", items[0].ID, first)
 	}
 }

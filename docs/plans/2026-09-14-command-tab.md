@@ -70,22 +70,23 @@ sounds like it means — silently dropped eleven of the forty-one actions, and
 they were the best ones: every pane-navigation and resize verb `herdr-splits`
 exposes declares `global`.
 
-## Ranking — not yet
+## Ranking
 
-The first cut orders the list statically: native verbs first, then plugin
-actions by plugin id and action id. That is predictable, which is the property
-that matters before muscle memory exists, and the fuzzy query does the real
-work of getting to a row.
+The list starts static: native verbs first, then plugin actions by plugin id
+and action id. That is predictable, which is the property that matters before
+muscle memory exists, and the fuzzy query does the real work of getting to a
+row.
 
-Frecency is the intended next step, reusing `internal/sshusage` rather than
-growing a second ranker. The ssh tab already learns which hosts an operator
-reaches for; the same decay applied to command ids would put `pane.split` above
-`workspace.create` after a day of use without anyone configuring an order. It
-is deliberately not in the first cut: a list that reorders itself while someone
-is still learning what is in it is harder to learn, not easier.
+Frecency then floats what the operator actually runs, reusing `internal/sshusage`
+rather than growing a second ranker — same counts, same decay, a separate file
+so a host and a command id cannot inherit each other's rank. The important half
+is what it does _not_ do: a command with no history keeps its static position,
+so the tab an operator is still learning does not reshuffle underneath them.
+Only rows they have already chosen move, and a command herdr refused is not
+recorded, so a failed invocation does not climb.
 
-Worth noting as its own differentiator when it lands: of the 1114 plugins in
-the marketplace, zero mention frecency.
+Worth noting as its own differentiator: of the 1114 plugins in the marketplace,
+zero mention frecency.
 
 ## Destructive verbs
 

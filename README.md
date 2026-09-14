@@ -93,7 +93,7 @@ switching tabs clears the query.
   and where. `space` marks panes and `^b` sends one command to all of them.
 - **ssh** lists the hosts in `~/.ssh/config` and opens one.
 - **cmd** lists every verb you can invoke by name: a handful of built-in
-  Herdr operations, plus every action each of your *other* installed plugins
+  Herdr operations, plus every action each of your _other_ installed plugins
   exposes. Enter runs the selected one.
 
 On the first four, Enter jumps to the selected workspace, agent, tab, or pane. The
@@ -123,6 +123,9 @@ two things merged: a few built-in Herdr operations (split, zoom, new tab, new
 workspace), and every action your other installed plugins expose — their own
 titles, read live from the running server. Install another plugin and its
 actions appear here next time you open the picker, with nothing to configure.
+The verbs you run float to the top the same way hosts do on the ssh tab, while
+the ones you have never run stay exactly where they started, so the list you
+are still learning does not reshuffle underneath you.
 
 This is the one thing here that a CLI-based plugin cannot do. `herdr` the
 command exposes roughly thirty operations; the socket API exposes 128, and two
@@ -130,7 +133,7 @@ of them — `plugin.action.list` and `plugin.action.invoke` — are how one plug
 enumerates and runs another's actions. On the author's machine that turns into
 46 rows: 5 built-in verbs and 41 actions across 13 other plugins.
 
-Verbs act where *you* were, not where the popup is: a split splits the pane you
+Verbs act where _you_ were, not where the popup is: a split splits the pane you
 opened the picker from. This plugin's own actions are left out of its own list.
 If the socket is unavailable the tab still shows the built-in verbs, and if a
 plugin action cannot be listed the footer says so.
@@ -150,18 +153,18 @@ rather than a dialog.
 
 On every tab:
 
-| Key                    | Action                             |
-| ---------------------- | ---------------------------------- |
-| type                   | fuzzy filter on the current list   |
-| `backspace`            | delete the last character          |
-| `^w`                   | delete the last word of the query  |
-| `^u`                   | clear the query                    |
-| `↑` / `↓`, `^k` / `^j` | move the cursor                    |
-| `←` / `→`, Tab         | change tab                         |
+| Key                    | Action                                              |
+| ---------------------- | --------------------------------------------------- |
+| type                   | fuzzy filter on the current list                    |
+| `backspace`            | delete the last character                           |
+| `^w`                   | delete the last word of the query                   |
+| `^u`                   | clear the query                                     |
+| `↑` / `↓`, `^k` / `^j` | move the cursor                                     |
+| `←` / `→`, Tab         | change tab                                          |
 | `enter`                | jump to the row, ssh in a split, or run the command |
-| `^x`                   | row actions (not on the ssh tab)   |
-| `space`                | mark the row (panes and ssh tabs)  |
-| `esc`, `^c`            | close                              |
+| `^x`                   | row actions (not on the ssh tab)                    |
+| `space`                | mark the row (panes and ssh tabs)                   |
+| `esc`, `^c`            | close                                               |
 
 Additional keys on the **ssh** tab:
 
@@ -372,9 +375,11 @@ show you. It never writes to them.
 a line in your config; the file it points at is not read. No key, passphrase or
 credential is read, stored or sent anywhere.
 
-**Writes one file.** `ssh-usage.json` in the plugin's state directory records
-how often each alias is opened, so the ssh tab can put the ones you use first.
-It holds aliases and counters only, and is written through a temp file and a
+**Writes two files.** `ssh-usage.json` in the plugin's state directory records
+how often each alias is opened, so the ssh tab can put the ones you use first;
+`command-usage.json` does the same for the cmd tab, keyed by command id. They
+hold names and counters only — no arguments, no hostnames beyond the alias you
+already wrote in your config — and each is written through a temp file and a
 rename so a crash cannot truncate it. Everything else is stateless: the action
 forwards the caller's pane, tab, and workspace ids directly to the picker
 process, which is what lets `enter` split the pane you were working in without
@@ -419,7 +424,7 @@ writes into a pane you did not ask it to open, and nothing is sent without the
 
 The cmd tab calls `plugin.action.list` when it opens, which returns the actions
 your other installed plugins declare in their manifests, and
-`plugin.action.invoke` when you pick one. Invoking runs *that* plugin's command,
+`plugin.action.invoke` when you pick one. Invoking runs _that_ plugin's command,
 as your user, exactly as pressing its own keybinding would — the picker is
 choosing it, not sandboxing it, so the cmd tab is worth trusting only as far as
 you trust the plugins you installed. Titles from other manifests are stripped

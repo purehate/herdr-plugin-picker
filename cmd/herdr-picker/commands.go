@@ -2,11 +2,15 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/purehate/herdr-plugin-picker/internal/herdrsock"
 	"github.com/purehate/herdr-plugin-picker/internal/picker"
+	"github.com/purehate/herdr-plugin-picker/internal/sshusage"
 )
 
 // nativeVerb is one socket operation worth invoking by name. The set is
@@ -119,14 +123,49 @@ func navCommandItems(actions []herdrsock.Action, contexts []string, selfPlugin s
 	return items
 }
 
+// commandUsagePath is where the cmd tab's frecency is stored, or "" when there
+// is no state directory to write it to. A separate file from the ssh tab's:
+// the two key spaces are unrelated, and a host named like a command id would
+// otherwise inherit its rank.
+func commandUsagePath() string {
+	dir := resolvePluginStateDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "command-usage.json")
+}
+
+// orderCommands floats what the operator actually runs to the top, leaving
+// everything they have never run in the order navCommandItems built — native
+// verbs first, then plugin actions by id. That matters more than it sounds:
+// an unused list stays predictable, and only rows with a history move.
+func orderCommands(items []picker.NavItem, usage map[string]sshusage.Usage, now time.Time) []picker.NavItem {
+	ordered := append([]picker.NavItem(nil), items...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return usage[ordered[i].ID].Score(now) > usage[ordered[j].ID].Score(now)
+	})
+	return ordered
+}
+
+// recordCommandUse bumps a command's frecency for the next time the picker
+// opens. A failure is reported and otherwise ignored, like the ssh tab's:
+// losing the ordering is much cheaper than losing the command.
+func recordCommandUse(out io.Writer, id string) {
+	if err := sshusage.Record(commandUsagePath(), id, time.Now()); err != nil {
+		_, _ = fmt.Fprintf(out, "herdr-picker: could not save command usage: %v\n", err)
+	}
+}
+
 // runCommand invokes the row the operator chose. Plugin actions carry the
 // caller's own position rather than the picker's, so a plugin that acts on
 // "the focused pane" acts on the operator's work and not on the popup that has
 // just closed over it.
 func runCommand(sock herdrsock.Client, id string, ctx caller) error {
-	if pluginID, actionID, ok := splitPluginCommand(id); ok {
+	// targetPlugin, not pluginID: the package const names *this* plugin, and
+	// shadowing it here would report the invoked plugin as its own caller.
+	if targetPlugin, actionID, ok := splitPluginCommand(id); ok {
 		return sock.InvokeAction(
-			herdrsock.Action{PluginID: pluginID, ActionID: actionID},
+			herdrsock.Action{PluginID: targetPlugin, ActionID: actionID},
 			herdrsock.InvocationContext{
 				WorkspaceID:      ctx.WorkspaceID,
 				TabID:            ctx.TabID,
@@ -147,7 +186,7 @@ func runCommand(sock herdrsock.Client, id string, ctx caller) error {
 // splitPluginCommand undoes the "plugin:<plugin_id>/<action_id>" id. Plugin ids
 // contain dots but not slashes, and action ids contain neither, so the last
 // slash is the separator.
-func splitPluginCommand(id string) (pluginID, actionID string, ok bool) {
+func splitPluginCommand(id string) (targetPlugin, actionID string, ok bool) {
 	rest, found := strings.CutPrefix(id, pluginCommandPrefix)
 	if !found {
 		return "", "", false
