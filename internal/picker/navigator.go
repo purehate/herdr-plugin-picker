@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -41,6 +42,12 @@ const (
 	navFooterRows = 3
 )
 
+// defaultRefreshInterval is how often an open picker re-reads the server
+// inventory. Fast enough that a newly blocked agent appears while the operator
+// is still looking at the list, slow enough that the subprocess per tick does
+// not dominate the popup's lifetime.
+const defaultRefreshInterval = time.Second
+
 // NavItem is display metadata plus the opaque Herdr ID used when selected. For
 // the ssh tab, Host carries the parsed config entry the row opens and the
 // position slices are the runes the query matched, so the row highlights them
@@ -57,11 +64,28 @@ type NavItem struct {
 	HostNamePos []int
 }
 
+// NavRefresh is the set of server-backed lists the picker rebuilds on each
+// live-refresh tick. Hosts are read from disk and cannot change under an open
+// popup, so they are not part of a refresh.
+type NavRefresh struct {
+	Spaces   []NavItem
+	Agents   []NavItem
+	Sessions []NavItem
+}
+
 type NavOptions struct {
 	Theme    theme.Theme
 	Spaces   []NavItem
 	Agents   []NavItem
 	Sessions []NavItem
+
+	// Refresh re-reads the server inventory for a live picker. When set, the
+	// picker re-runs it every RefreshInterval and swaps in the new lists,
+	// holding the cursor on the same item ID and leaving the query alone. nil
+	// disables live refresh.
+	Refresh func() (NavRefresh, error)
+	// RefreshInterval is the tick period; zero means defaultRefreshInterval.
+	RefreshInterval time.Duration
 
 	// Hosts is the ssh config inventory, rendered as the ssh tab.
 	Hosts []sshconfig.Host
@@ -99,6 +123,9 @@ type navigatorModel struct {
 	probed map[string]bool
 	up     map[string]bool
 	chosen *NavSelection
+	// refreshErr is the last failed inventory read, kept so the footer can say
+	// the list on screen is stale rather than silently pretending it is current.
+	refreshErr error
 }
 
 func newNavigatorModel(o NavOptions) navigatorModel {
@@ -184,10 +211,70 @@ func (m navigatorModel) refilter() navigatorModel {
 }
 
 func (m navigatorModel) Init() tea.Cmd {
-	if m.opts.Probes == nil {
-		return nil
+	var cmds []tea.Cmd
+	if m.opts.Probes != nil {
+		cmds = append(cmds, waitProbe(m.opts.Probes))
 	}
-	return waitProbe(m.opts.Probes)
+	if m.opts.Refresh != nil {
+		cmds = append(cmds, navTick(m.interval()))
+	}
+	return tea.Batch(cmds...)
+}
+
+// applyRefresh swaps in a freshly read inventory. The cursor is restored by
+// item ID rather than index: a refresh reorders rows (blocked agents float to
+// the top), so an index would slide the selection onto a neighbour. The query
+// is untouched, so the list stays filtered as it was.
+func (m navigatorModel) applyRefresh(r NavRefresh) navigatorModel {
+	m.refreshErr = nil
+	if !navRefreshChanged(m.opts, r) {
+		return m
+	}
+	prevID := ""
+	if m.cursor >= 0 && m.cursor < len(m.items) {
+		prevID = m.items[m.cursor].ID
+	}
+	m.opts.Spaces, m.opts.Agents, m.opts.Sessions = r.Spaces, r.Agents, r.Sessions
+	return m.refilterKeeping(prevID)
+}
+
+// refilterKeeping re-ranks the active section and puts the cursor back on id,
+// falling back to refilter's default when that item is gone.
+func (m navigatorModel) refilterKeeping(id string) navigatorModel {
+	m = m.refilter()
+	if id == "" {
+		return m
+	}
+	for i, item := range m.items {
+		if item.ID == id {
+			m.cursor = i
+			return m
+		}
+	}
+	return m
+}
+
+func navRefreshChanged(o NavOptions, r NavRefresh) bool {
+	return !navItemsEqual(o.Spaces, r.Spaces) ||
+		!navItemsEqual(o.Agents, r.Agents) ||
+		!navItemsEqual(o.Sessions, r.Sessions)
+}
+
+// navItemsEqual compares the fields the three server-backed lists populate.
+// Host and the match positions are not compared: they belong to the ssh tab,
+// whose inventory comes from disk and is not part of a refresh.
+func navItemsEqual(a, b []NavItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].Label != b[i].Label ||
+			a[i].Detail != b[i].Detail || a[i].Search != b[i].Search ||
+			a[i].Current != b[i].Current {
+			return false
+		}
+	}
+	return true
 }
 
 // probeMsg and probeClosedMsg carry one probe result and the channel's close
@@ -207,6 +294,41 @@ func waitProbe(ch <-chan probe.Result) tea.Cmd {
 	}
 }
 
+// navTickMsg fires the next inventory re-read. The read itself runs as a
+// separate command so a slow herdr call cannot stall the tick loop.
+type navTickMsg struct{}
+
+// navRefreshMsg carries a freshly read inventory, and navRefreshErrMsg the
+// failure to read one. A failed read keeps the last good list on screen and
+// flags it, rather than emptying a popup the operator is navigating.
+type navRefreshMsg NavRefresh
+type navRefreshErrMsg struct{ err error }
+
+// navTick waits d and then asks for one refresh. Ticks are re-armed when a
+// refresh completes, not when it starts, so a herdr call slower than the
+// interval cannot queue ticks behind it.
+func navTick(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return navTickMsg{} })
+}
+
+func (m navigatorModel) refreshCmd() tea.Cmd {
+	refresh := m.opts.Refresh
+	return func() tea.Msg {
+		r, err := refresh()
+		if err != nil {
+			return navRefreshErrMsg{err: err}
+		}
+		return navRefreshMsg(r)
+	}
+}
+
+func (m navigatorModel) interval() time.Duration {
+	if m.opts.RefreshInterval > 0 {
+		return m.opts.RefreshInterval
+	}
+	return defaultRefreshInterval
+}
+
 func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -217,6 +339,16 @@ func (m navigatorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitProbe(m.opts.Probes)
 	case probeClosedMsg:
 		return m, nil
+	case navTickMsg:
+		if m.opts.Refresh == nil {
+			return m, nil
+		}
+		return m, m.refreshCmd()
+	case navRefreshMsg:
+		return m.applyRefresh(NavRefresh(msg)), navTick(m.interval())
+	case navRefreshErrMsg:
+		m.refreshErr = msg.err
+		return m, navTick(m.interval())
 	case tea.MouseClickMsg:
 		if msg.Button != tea.MouseLeft {
 			break
@@ -473,10 +605,14 @@ func (m navigatorModel) emptyMessage() string {
 }
 
 func (m navigatorModel) footerHints(s styles) string {
+	hints := "↑↓ select   ←→/tab section   ^u clear"
 	if m.section == NavSSH {
-		return frameIndent + s.muted.Render("↑↓ select   ←→/tab section   ^o preview   ^u clear")
+		hints = "↑↓ select   ←→/tab section   ^o preview   ^u clear"
 	}
-	return frameIndent + s.muted.Render("↑↓ select   ←→/tab section   ^u clear")
+	if m.refreshErr != nil {
+		hints += "   ⚠ refresh failed"
+	}
+	return frameIndent + s.muted.Render(hints)
 }
 
 func (m navigatorModel) footerActions(s styles, selected lipgloss.Style) string {

@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -185,5 +186,133 @@ func TestNavigatorSelectionUsesRGBAccentBackground(t *testing.T) {
 	}
 	if rendered := style.Render(" selected "); !strings.Contains(rendered, "48;2;20;226;26") {
 		t.Fatalf("selected row emitted no green background: %q", rendered)
+	}
+}
+
+func TestNavigatorInitTicksOnlyWithRefresh(t *testing.T) {
+	if cmd := newNavigatorModel(navFixture()).Init(); cmd != nil {
+		t.Fatalf("no refresh should arm no command, got %v", cmd)
+	}
+	o := navFixture()
+	o.Refresh = func() (NavRefresh, error) { return NavRefresh{}, nil }
+	if cmd := newNavigatorModel(o).Init(); cmd == nil {
+		t.Fatal("refresh should arm a tick")
+	}
+}
+
+func TestNavigatorRefreshCommandReadsInventory(t *testing.T) {
+	calls := 0
+	o := navFixture()
+	o.Refresh = func() (NavRefresh, error) {
+		calls++
+		return NavRefresh{Spaces: []NavItem{{ID: "w9", Label: "fresh"}}}, nil
+	}
+	msg := newNavigatorModel(o).refreshCmd()()
+	r, ok := msg.(navRefreshMsg)
+	if !ok || calls != 1 || len(r.Spaces) != 1 || r.Spaces[0].ID != "w9" {
+		t.Fatalf("refreshCmd = %#v after %d calls", msg, calls)
+	}
+
+	o.Refresh = func() (NavRefresh, error) { return NavRefresh{}, errors.New("socket down") }
+	if _, ok := newNavigatorModel(o).refreshCmd()().(navRefreshErrMsg); !ok {
+		t.Fatal("a failed read should report navRefreshErrMsg")
+	}
+}
+
+func TestNavigatorRefreshKeepsCursorOnSameItem(t *testing.T) {
+	o := navFixture()
+	o.Agents = []NavItem{{ID: "a1", Label: "one"}, {ID: "a2", Label: "two"}, {ID: "a3", Label: "three"}}
+	m := newNavigatorModel(o)
+	m.section = NavAgents
+	m = m.refilter()
+	m.cursor = 2 // a3
+	next, _ := m.Update(navRefreshMsg(NavRefresh{
+		Spaces:   o.Spaces,
+		Agents:   []NavItem{{ID: "a0", Label: "blocked"}, {ID: "a1", Label: "one"}, {ID: "a2", Label: "two"}, {ID: "a3", Label: "three"}},
+		Sessions: o.Sessions,
+	}))
+	got := next.(navigatorModel)
+	if got.items[got.cursor].ID != "a3" {
+		t.Fatalf("cursor moved to %q, want a3", got.items[got.cursor].ID)
+	}
+}
+
+func TestNavigatorRefreshKeepsQueryAndRefilters(t *testing.T) {
+	o := navFixture()
+	o.Agents = []NavItem{{ID: "a1", Label: "alpha"}, {ID: "a2", Label: "beta"}}
+	m := newNavigatorModel(o)
+	m.section = NavAgents
+	m.query = "beta"
+	m = m.refilter()
+	next, _ := m.Update(navRefreshMsg(NavRefresh{
+		Spaces:   o.Spaces,
+		Agents:   []NavItem{{ID: "a0", Label: "beta blocked"}, {ID: "a1", Label: "alpha"}, {ID: "a2", Label: "beta"}},
+		Sessions: o.Sessions,
+	}))
+	got := next.(navigatorModel)
+	if got.query != "beta" || len(got.items) != 2 || got.items[got.cursor].ID != "a2" {
+		t.Fatalf("query %q, items %+v, cursor %d", got.query, got.items, got.cursor)
+	}
+}
+
+func TestNavigatorIdenticalRefreshLeavesCursorAlone(t *testing.T) {
+	m := newNavigatorModel(navFixture())
+	if m.cursor != 1 {
+		t.Fatalf("setup cursor = %d", m.cursor)
+	}
+	m = m.move(-1) // step off the Current row to w1
+	next, _ := m.Update(navRefreshMsg(NavRefresh{
+		Spaces:   navFixture().Spaces,
+		Agents:   navFixture().Agents,
+		Sessions: navFixture().Sessions,
+	}))
+	if got := next.(navigatorModel); got.cursor != 0 {
+		t.Fatalf("identical refresh moved cursor to %d", got.cursor)
+	}
+}
+
+func TestNavigatorRefreshErrorKeepsListAndFlagsStale(t *testing.T) {
+	m := newNavigatorModel(navFixture())
+	m.width, m.height = 90, 20
+	next, cmd := m.Update(navRefreshErrMsg{err: errors.New("socket down")})
+	got := next.(navigatorModel)
+	if got.refreshErr == nil {
+		t.Fatal("error not recorded")
+	}
+	if len(got.items) != len(m.items) {
+		t.Fatalf("failed refresh changed the list: %+v", got.items)
+	}
+	if cmd == nil {
+		t.Fatal("a completed read should re-arm the tick")
+	}
+	if !strings.Contains(got.View().Content, "refresh failed") {
+		t.Fatalf("footer does not flag staleness: %q", got.View().Content)
+	}
+
+	next, _ = got.Update(navRefreshMsg(NavRefresh{
+		Spaces:   navFixture().Spaces,
+		Agents:   navFixture().Agents,
+		Sessions: navFixture().Sessions,
+	}))
+	if recovered := next.(navigatorModel); recovered.refreshErr != nil {
+		t.Fatal("a successful refresh should clear the stale flag")
+	}
+}
+
+func TestNavigatorTickRunsRefreshAndRearms(t *testing.T) {
+	o := navFixture()
+	o.Refresh = func() (NavRefresh, error) { return NavRefresh{}, nil }
+	m := newNavigatorModel(o)
+	if _, cmd := m.Update(navTickMsg{}); cmd == nil {
+		t.Fatal("tick should run a refresh")
+	}
+	if _, cmd := m.Update(navRefreshMsg(NavRefresh{})); cmd == nil {
+		t.Fatal("a completed refresh should re-arm the tick")
+	}
+	if _, cmd := m.Update(navRefreshErrMsg{err: errors.New("x")}); cmd == nil {
+		t.Fatal("a failed refresh should re-arm the tick")
+	}
+	if _, cmd := newNavigatorModel(navFixture()).Update(navTickMsg{}); cmd != nil {
+		t.Fatal("tick with no refresh should do nothing")
 	}
 }

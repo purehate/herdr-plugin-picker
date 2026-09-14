@@ -105,6 +105,62 @@ func TestRunNavigatorUsesOneSnapshotAndFocusesSelection(t *testing.T) {
 	}
 }
 
+func TestNavigatorOptionsSortsBlockedAgentsFirst(t *testing.T) {
+	s := herdrapi.Snapshot{Agents: []herdrapi.AgentInfo{
+		{PaneID: "p1", Status: "working", Name: "one"},
+		{PaneID: "p2", Status: "blocked", Name: "two"},
+		{PaneID: "p3", Status: "done", Name: "three"},
+		{PaneID: "p4", Status: "blocked", Name: "four"},
+	}}
+	o := navigatorOptions(s, theme.Default(), nil)
+	var got []string
+	for _, a := range o.Agents {
+		got = append(got, a.ID)
+	}
+	want := []string{"p2", "p4", "p1", "p3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("agent order = %v, want %v", got, want)
+	}
+}
+
+// TestRunNavigatorRefreshRereadsSnapshot pins the live-refresh wiring: the
+// picker must be handed a function that reads the server again, not a closure
+// over the first snapshot.
+func TestRunNavigatorRefreshRereadsSnapshot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HERDR_CONFIG_PATH", t.TempDir()+"/absent.toml")
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", pluginConfigDir(t, "reuse_panes = false\nprobe = false\n"))
+	var snapshots int
+	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
+		if reflect.DeepEqual(args, []string{"api", "snapshot"}) {
+			snapshots++
+			return []byte(`{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"project"}]}}}`), nil
+		}
+		return nil, nil
+	}}
+	var refresh func() (picker.NavRefresh, error)
+	pick := func(o picker.NavOptions) (picker.NavSelection, bool, error) {
+		refresh = o.Refresh
+		return picker.NavSelection{}, false, nil
+	}
+	if err := runNavigatorWith(io.Discard, strings.NewReader(""), pick, api); err != nil {
+		t.Fatal(err)
+	}
+	if refresh == nil {
+		t.Fatal("navigator was not given a refresh function")
+	}
+	if snapshots != 1 {
+		t.Fatalf("initial snapshots = %d, want 1", snapshots)
+	}
+	r, err := refresh()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 2 || len(r.Spaces) != 1 || r.Spaces[0].ID != "w1" {
+		t.Fatalf("refresh read %d snapshots, spaces %+v", snapshots, r.Spaces)
+	}
+}
+
 // TestRunNavigatorSSHSelectionOpensASession pins the ssh tab's whole point: a
 // NavSSH choice must leave through performSelection as a session open, carrying
 // the host and placement the row was chosen with.

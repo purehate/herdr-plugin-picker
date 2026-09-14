@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,26 +63,30 @@ func countLabel(n int, singular string) string {
 	return fmt.Sprintf("%d %ss", n, singular)
 }
 
-func navigatorOptions(snapshot herdrapi.Snapshot, th theme.Theme, hosts []sshconfig.Host) picker.NavOptions {
-	o := picker.NavOptions{Theme: th, Hosts: hosts}
+// navItems builds the three server-backed lists the picker shows. It is kept
+// separate from navigatorOptions so the live-refresh tick can rebuild them from
+// a fresh snapshot without re-reading the disk-backed hosts or the warnings.
+func navItems(snapshot herdrapi.Snapshot) picker.NavRefresh {
 	spaceLabels := make(map[string]string, len(snapshot.Workspaces))
+	spaces := make([]picker.NavItem, 0, len(snapshot.Workspaces))
 	for _, w := range snapshot.Workspaces {
 		label := navText(w.Label)
 		spaceLabels[w.ID] = label
-		o.Spaces = append(o.Spaces, picker.NavItem{
+		spaces = append(spaces, picker.NavItem{
 			ID:      w.ID,
 			Label:   statusMark(w.Status) + " " + label,
 			Detail:  countLabel(w.TabCount, "tab") + " · " + countLabel(w.PaneCount, "pane"),
 			Current: w.Focused,
 		})
 	}
-	for _, a := range snapshot.Agents {
+	agents := make([]picker.NavItem, 0, len(snapshot.Agents))
+	for _, a := range blockedFirst(snapshot.Agents) {
 		title := navText(a.Title)
 		if title == "" {
 			title = navText(a.CWD)
 		}
 		space := spaceLabels[a.WorkspaceID]
-		o.Agents = append(o.Agents, picker.NavItem{
+		agents = append(agents, picker.NavItem{
 			ID:      a.PaneID,
 			Label:   statusMark(a.Status) + " " + navText(a.Name) + "  " + title,
 			Detail:  space + " · " + a.Status,
@@ -89,16 +94,46 @@ func navigatorOptions(snapshot herdrapi.Snapshot, th theme.Theme, hosts []sshcon
 			Current: a.Focused,
 		})
 	}
+	sessions := make([]picker.NavItem, 0, len(snapshot.Tabs))
 	for _, t := range snapshot.Tabs {
 		space := spaceLabels[t.WorkspaceID]
-		o.Sessions = append(o.Sessions, picker.NavItem{
+		sessions = append(sessions, picker.NavItem{
 			ID:      t.ID,
 			Label:   statusMark(t.Status) + " " + navText(t.Label),
 			Detail:  space + " · " + countLabel(t.PaneCount, "pane"),
 			Current: t.Focused,
 		})
 	}
-	return o
+	return picker.NavRefresh{Spaces: spaces, Agents: agents, Sessions: sessions}
+}
+
+// blockedFirst orders agents so the ones waiting on the operator sort above the
+// rest, keeping the API's order within each group. The picker ranks equal
+// scores stably, so this order survives a query.
+func blockedFirst(agents []herdrapi.AgentInfo) []herdrapi.AgentInfo {
+	out := append([]herdrapi.AgentInfo(nil), agents...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return agentBlockedRank(out[i].Status) < agentBlockedRank(out[j].Status)
+	})
+	return out
+}
+
+func agentBlockedRank(status string) int {
+	if status == "blocked" {
+		return 0
+	}
+	return 1
+}
+
+func navigatorOptions(snapshot herdrapi.Snapshot, th theme.Theme, hosts []sshconfig.Host) picker.NavOptions {
+	items := navItems(snapshot)
+	return picker.NavOptions{
+		Theme:    th,
+		Hosts:    hosts,
+		Spaces:   items.Spaces,
+		Agents:   items.Agents,
+		Sessions: items.Sessions,
+	}
 }
 
 func focusNavigatorSelection(api herdrapi.Client, sel picker.NavSelection) error {
@@ -149,6 +184,16 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	opts := navigatorOptions(snapshot, th, hosts)
 	opts.ShowPreview = cfg.ShowPreview
 	opts.Warnings = warnings
+	// The inventory on screen drifts the moment it is read — agents block and
+	// finish while the popup is open — so hand the picker a way to re-read it.
+	// Hosts and warnings stay as built: they come from disk, not the server.
+	opts.Refresh = func() (picker.NavRefresh, error) {
+		fresh, err := api.Snapshot()
+		if err != nil {
+			return picker.NavRefresh{}, err
+		}
+		return navItems(fresh), nil
+	}
 	// Only ask herdr for the session panes when reuse is on, for the reason the
 	// standalone picker gated it: the ▪ marker promises enter focuses the
 	// existing session, a promise only the reuse branch can keep.

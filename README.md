@@ -85,10 +85,14 @@ switching tabs clears the query.
 - **ssh** lists the hosts in `~/.ssh/config` and opens one.
 
 On the first three, Enter jumps to the selected workspace, agent, or tab. The
-inventory is read once when the popup opens, so close and reopen it to see newly
-created spaces, agents, or tabs. It reads only the metadata in
-`herdr api snapshot` and invokes Herdr's own workspace, agent, or tab focus
-command; it does not read agent conversations or create panes.
+inventory re-reads `herdr api snapshot` about once a second while the popup is
+open, so newly created spaces, agents, and tabs appear without reopening it;
+the cursor stays on the row it was on and the query is kept. Blocked agents
+sort to the top so the ones waiting on you come first. If a read fails, the
+footer says `⚠ refresh failed` and the last good list stays on screen. It reads
+only the metadata in `herdr api snapshot` and invokes Herdr's own workspace,
+agent, or tab focus command; it does not read agent conversations or create
+panes.
 
 On **ssh**, Enter opens a session in a split, `^t` in a new tab, `^z` in a
 zoomed pane, and `^n` forces a new pane even when a session for that host is
@@ -255,7 +259,9 @@ failures read the same too.
 
 **Talks to herdr only through `$HERDR_BIN_PATH`** — snapshot, open, close,
 rename and focus panes. There is no network client, no telemetry, and no other
-process it starts.
+process it starts. While the picker is open it re-runs `herdr api snapshot`
+about once a second, so that one subprocess starts repeatedly for as long as the
+popup is on screen; closing the popup stops it.
 
 Three direct dependencies, all Charm/TOML libraries, listed under
 [Development](#development). If you would rather read the code than this
