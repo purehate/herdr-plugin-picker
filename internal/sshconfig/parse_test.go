@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -528,5 +529,52 @@ func TestParseWarningFileIsAbsoluteFromARelativeRoot(t *testing.T) {
 	}
 	if !sawMalformed || !sawInclude {
 		t.Fatalf("warnings = %v, want one malformed-line and one unreadable-include warning", warns)
+	}
+}
+
+// Forwarding keywords are additive: ssh applies every occurrence, so the
+// first-wins map that resolves the other keywords would silently drop all but
+// the first of each. The order within a keyword is the config order.
+func TestParseCollectsRepeatedPortForwards(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	write(t, root,
+		"Host tunnel\n  HostName 10.0.0.1\n"+
+			"  LocalForward 8080 localhost:80\n"+
+			"  LocalForward 9090 localhost:90\n"+
+			"  RemoteForward 3000 localhost:3000\n"+
+			"  DynamicForward 1080\n"+
+			"  DynamicForward 1081\n")
+
+	hosts, warns, err := parse(root, dir)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(warns) != 0 {
+		t.Fatalf("warnings = %v, want none", warns)
+	}
+	h := hostByAlias(t, hosts, "tunnel")
+	if want := []string{"8080 localhost:80", "9090 localhost:90"}; !reflect.DeepEqual(h.LocalForward, want) {
+		t.Errorf("LocalForward = %v, want %v", h.LocalForward, want)
+	}
+	if want := []string{"3000 localhost:3000"}; !reflect.DeepEqual(h.RemoteForward, want) {
+		t.Errorf("RemoteForward = %v, want %v", h.RemoteForward, want)
+	}
+	if want := []string{"1080", "1081"}; !reflect.DeepEqual(h.DynamicForward, want) {
+		t.Errorf("DynamicForward = %v, want %v", h.DynamicForward, want)
+	}
+}
+
+func TestParseWildcardForwardAppliesToNamedHost(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	write(t, root, "Host web\n  HostName 10.0.0.2\nHost *\n  LocalForward 1080 localhost:1080\n")
+
+	hosts, _, err := parse(root, dir)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := hostByAlias(t, hosts, "web").LocalForward; len(got) != 1 || got[0] != "1080 localhost:1080" {
+		t.Fatalf("web LocalForward = %v, want the Host * forward", got)
 	}
 }

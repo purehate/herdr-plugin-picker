@@ -25,6 +25,14 @@ type Host struct {
 	ProxyCommand string
 	SourceFile   string
 	SourceLine   int
+
+	// Forwards are display-only, like IdentityFile: ssh applies them from the
+	// config itself, so the picker never puts them on a command line. They are
+	// slices because every occurrence applies — these keywords are additive,
+	// unlike the first-wins ones above.
+	LocalForward   []string
+	RemoteForward  []string
+	DynamicForward []string
 }
 
 // Warning is a non-fatal parse problem, surfaced in the picker footer.
@@ -425,6 +433,17 @@ func resolveHost(alias string, blocks []block) Host {
 			h.SourceFile, h.SourceLine = b.file, b.line
 		}
 		for _, pair := range b.keys {
+			// Forwards are additive, not first-wins: ssh applies every
+			// LocalForward/RemoteForward/DynamicForward it sees, so collecting
+			// them through the first-wins map below would drop all but the first.
+			switch pair.key {
+			case "localforward":
+				h.LocalForward = append(h.LocalForward, pair.value)
+			case "remoteforward":
+				h.RemoteForward = append(h.RemoteForward, pair.value)
+			case "dynamicforward":
+				h.DynamicForward = append(h.DynamicForward, pair.value)
+			}
 			if _, exists := values[pair.key]; !exists {
 				values[pair.key] = pair.value
 			}

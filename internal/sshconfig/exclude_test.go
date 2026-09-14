@@ -1,6 +1,9 @@
 package sshconfig
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestExclude(t *testing.T) {
 	// Every field is populated, deliberately. Exclude's only structural
@@ -28,14 +31,14 @@ func TestExclude(t *testing.T) {
 	// and a check on it passes for every possible implementation — including
 	// one that writes through hosts[i] into the caller's backing array. The
 	// mutation this now catches is `hosts[i].HostName = ...` on the excluded
-	// entries, which the previous length check could not see. Host is
-	// comparable (all string/int fields), so the whole struct is compared
-	// rather than the one field a mutant happened to pick.
+	// entries, which the previous length check could not see. Host carries slices
+	// (the forwards), so the whole struct is compared with DeepEqual rather than
+	// `!=`.
 	if len(hosts) != len(before) {
 		t.Fatalf("Exclude resliced its input: len = %d, want %d", len(hosts), len(before))
 	}
 	for i := range before {
-		if hosts[i] != before[i] {
+		if !reflect.DeepEqual(hosts[i], before[i]) {
 			t.Errorf("Exclude mutated its input at index %d:\n got  %+v\n want %+v", i, hosts[i], before[i])
 		}
 	}

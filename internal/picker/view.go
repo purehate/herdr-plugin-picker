@@ -34,14 +34,14 @@ const (
 )
 
 // previewLabelWidth is the column the preview's values start at: the longest
-// label, "IdentityFile" at 12, plus two spaces.
+// label, "DynamicForward" at 14, plus two spaces.
 //
 // Fixed rather than computed from the fields the current host happens to set.
 // A per-host width would be tighter but the value edge would shift every time
 // the operator moved the cursor onto a host with a different field set, and
 // scanning down the list is the whole reason the panel exists — an edge that
 // moves while you scan is worse than one that sits further right.
-const previewLabelWidth = 14
+const previewLabelWidth = 16
 
 // previewFields is the preview's content, one "Label value" line per populated
 // field, with the labels padded so the values form a single edge. The alignment
@@ -65,6 +65,15 @@ func previewFields(h sshconfig.Host) []string {
 	}
 	if h.ProxyCommand != "" {
 		fields = append(fields, field{"ProxyCommand", h.ProxyCommand})
+	}
+	for _, f := range h.LocalForward {
+		fields = append(fields, field{"LocalForward", f})
+	}
+	for _, f := range h.RemoteForward {
+		fields = append(fields, field{"RemoteForward", f})
+	}
+	for _, f := range h.DynamicForward {
+		fields = append(fields, field{"DynamicForward", f})
 	}
 	if h.SourceFile != "" {
 		// Provenance matters as soon as Include is in play: "which file did this

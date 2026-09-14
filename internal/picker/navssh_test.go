@@ -297,3 +297,35 @@ func TestSSHRowShowsLatencyOnlyWhenUp(t *testing.T) {
 		t.Fatalf("latency shown for a down host:\n%s", view)
 	}
 }
+
+func TestPreviewFieldsIncludeForwards(t *testing.T) {
+	h := sshconfig.Host{Alias: "tunnel", HostName: "10.0.0.1", Port: "22",
+		LocalForward:   []string{"8080 localhost:80", "9090 localhost:90"},
+		RemoteForward:  []string{"3000 localhost:3000"},
+		DynamicForward: []string{"1080"},
+	}
+	lines := previewFields(h)
+	for _, want := range []string{"LocalForward", "RemoteForward", "DynamicForward"} {
+		found := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, want) {
+				if line[previewLabelWidth-1] != ' ' {
+					t.Fatalf("%s value does not start at the value column: %q", want, line)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("no %s line in %#v", want, lines)
+		}
+	}
+	count := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "LocalForward") {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("LocalForward lines = %d, want both", count)
+	}
+}

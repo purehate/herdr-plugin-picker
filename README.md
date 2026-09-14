@@ -269,6 +269,12 @@ Both `ProxyJump` and `ProxyCommand` are recognized. Their hosts are shown with
 `~` and are never dialed directly by the reachability probe. A value of `none`
 correctly disables either proxy mechanism.
 
+`LocalForward`, `RemoteForward`, and `DynamicForward` are parsed and shown in
+the host preview. Every occurrence is kept, in config order, because these
+keywords are additive where the rest are first-wins. Like `IdentityFile` they
+are display-only: ssh applies them from the config, so the picker never puts
+them on a command line.
+
 ## Direct connect
 
 Skip the picker entirely from a shell in any pane:
