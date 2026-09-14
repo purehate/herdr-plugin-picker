@@ -14,6 +14,7 @@ import (
 	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
 	"github.com/purehate/herdr-plugin-picker/internal/probe"
 	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/sshusage"
 	"github.com/purehate/herdr-plugin-picker/internal/theme"
 )
 
@@ -171,6 +172,9 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 		return fatalInPane(out, in, err)
 	}
 	hosts, warnings := loadHosts(sshConfigPath(), cfg)
+	// Pins and frecency reorder the ssh tab only. Rank keeps this order for ties,
+	// so a query still decides while typing and usage breaks the draws.
+	hosts = sshusage.Order(hosts, sshusage.Load(sshUsagePath()), cfg.Pinned, time.Now())
 
 	// Same footer policy as the standalone picker: the popup is where the
 	// operator is looking, so config problems render under the ssh tab rather
@@ -237,6 +241,7 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 		return nil
 	}
 	if sel.Section == picker.NavSSH {
+		recordHostUse(out, sel.Item.Host.Alias)
 		return performSelection(out, api, cfg, picker.Selection{
 			Host:      sel.Item.Host,
 			Placement: sel.Placement,

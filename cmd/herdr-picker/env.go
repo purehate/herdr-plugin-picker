@@ -54,6 +54,27 @@ func resolvePluginConfigDir() string {
 	return filepath.Join(home, ".config", "herdr", "plugins", "config", pluginID)
 }
 
+// resolvePluginStateDir returns this plugin's state directory, where the ssh
+// tab's frecency file lives. A plugin pane is handed HERDR_PLUGIN_STATE_DIR;
+// the popup mode is not, so this falls back to herdr's own layout under
+// XDG_STATE_HOME. There is no `herdr plugin state-dir` verb to ask, unlike
+// config-dir, so the fallback is derived from the directories herdr actually
+// uses on this machine (~/.local/state/herdr/plugins/<id>).
+func resolvePluginStateDir() string {
+	if d := os.Getenv("HERDR_PLUGIN_STATE_DIR"); d != "" {
+		return d
+	}
+	base := os.Getenv("XDG_STATE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		base = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(base, "herdr", "plugins", pluginID)
+}
+
 // resolveCaller fills in context that openPicker did not forward. In direct
 // popup mode openPicker does not run — the popup execs the picker verb itself —
 // so pickerCaller returns the zero value, and HERDR_ACTIVE_PANE_ID names the

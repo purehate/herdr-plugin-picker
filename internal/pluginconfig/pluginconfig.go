@@ -33,6 +33,8 @@ type Config struct {
 	ReusePanes     bool     `toml:"reuse_panes"`
 	Hidden         []string `toml:"hidden"`
 	SSHArgs        []string `toml:"ssh_args"`
+	// Pinned aliases sort above the rest on the ssh tab, in the order listed.
+	Pinned []string `toml:"pinned"`
 }
 
 // Defaults returns the configuration used when no file is present.

@@ -372,3 +372,13 @@ func TestLoadRejectsOnlyUnsafeSSHArgsKey(t *testing.T) {
 		t.Errorf("SSHArgs = %v, want unsafe arguments reset", cfg.SSHArgs)
 	}
 }
+
+func TestLoadReadsPinned(t *testing.T) {
+	cfg, err := LoadDir(writeConfig(t, "pinned = [\"web1\", \"db-primary\"]\n"))
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if want := []string{"web1", "db-primary"}; !reflect.DeepEqual(cfg.Pinned, want) {
+		t.Fatalf("Pinned = %v, want %v", cfg.Pinned, want)
+	}
+}

@@ -2,14 +2,18 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
 	"github.com/purehate/herdr-plugin-picker/internal/probe"
 	"github.com/purehate/herdr-plugin-picker/internal/sshconfig"
+	"github.com/purehate/herdr-plugin-picker/internal/sshusage"
 )
 
 // sshConfigPath returns the operator's ssh config path, or "" when there is none
@@ -29,6 +33,25 @@ func sshConfigPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".ssh", "config")
+}
+
+// sshUsagePath is where the ssh tab's frecency is stored, or "" when there is no
+// state directory to write it to.
+func sshUsagePath() string {
+	dir := resolvePluginStateDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "ssh-usage.json")
+}
+
+// recordHostUse bumps alias's frecency for the next time the picker opens. A
+// failure is reported and otherwise ignored: losing the ordering is much
+// cheaper than losing the connection the operator asked for.
+func recordHostUse(out io.Writer, alias string) {
+	if err := sshusage.Record(sshUsagePath(), alias, time.Now()); err != nil {
+		_, _ = fmt.Fprintf(out, "herdr-picker: could not save host usage: %v\n", err)
+	}
 }
 
 // loadHosts parses the operator's ssh config, drops hidden aliases, and returns

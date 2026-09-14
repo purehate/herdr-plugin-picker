@@ -219,6 +219,7 @@ show_preview = true
 reuse_panes = true            # focus an existing ssh:<host> pane instead of opening another
 hidden = []                   # globs matched against the alias
 ssh_args = []                 # non-routing flags passed to ssh before the destination
+pinned = []                   # aliases to keep at the top of the ssh tab
 ```
 
 `ssh_args` accepts ordinary client options such as `-v`, `-A`, or
@@ -228,6 +229,16 @@ a visible warning, as are options that run a command on your machine
 (`-o LocalCommand`, `PermitLocalCommand`, `KnownHostsCommand`). Put those
 settings in `~/.ssh/config`; otherwise the preview and probe could describe one
 destination while `ssh` connects to another.
+
+The **ssh** tab orders hosts by `pinned`, then by how often and how recently
+you have opened them, then by config order. Typing a query still decides — the
+ordering only breaks ties — so a host you use daily does not outrank an exact
+name match. The usage is kept in `$HERDR_PLUGIN_STATE_DIR/ssh-usage.json`,
+falling back to
+`~/.local/state/herdr/plugins/purehate.herdr-picker/ssh-usage.json` when that
+variable is not set (which it is not in popup mode). It holds nothing but
+aliases and counters, and is written through a temp file and a rename, so a
+crash cannot truncate it; delete it and you lose only the ordering.
 
 ## What it understands
 
@@ -278,10 +289,13 @@ show you. It never writes to them.
 a line in your config; the file it points at is not read. No key, passphrase or
 credential is read, stored or sent anywhere.
 
-**Writes no files.** The action forwards the caller's pane, tab, and workspace
-ids directly to the picker process. That is what lets `enter` split the pane you
-were working in without storing shared state that another picker could
-overwrite.
+**Writes one file.** `ssh-usage.json` in the plugin's state directory records
+how often each alias is opened, so the ssh tab can put the ones you use first.
+It holds aliases and counters only, and is written through a temp file and a
+rename so a crash cannot truncate it. Everything else is stateless: the action
+forwards the caller's pane, tab, and workspace ids directly to the picker
+process, which is what lets `enter` split the pane you were working in without
+storing shared state that another picker could overwrite.
 
 **Makes one TCP connection per host, if you let it.** That is the `●`/`○`
 marker: a connect to `HostName`:`Port`, 300 ms by default, no bytes sent and

@@ -111,6 +111,7 @@ func runConnectWith(out io.Writer, args []string) error {
 	}
 	for _, h := range hosts {
 		if h.Alias == alias {
+			recordHostUse(out, alias)
 			sel := picker.Selection{Host: h, Placement: placement}
 			return performSelection(out, herdrapi.New(), cfg, sel, currentCaller())
 		}
