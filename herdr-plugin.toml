@@ -1,6 +1,6 @@
 id = "purehate.herdr-picker"
 name = "Picker"
-version = "0.3.0"
+version = "0.4.0"
 
 # 0.9.0 is the only version this has been built and run against, and the field
 # is pure gatekeeping — herdr refuses to link or install when the minimum is
