@@ -115,16 +115,20 @@ func TestOpenHostsOpensEveryMarkedHost(t *testing.T) {
 func TestRunNavigatorUsesOneSnapshotAndFocusesSelection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("HERDR_CONFIG_PATH", t.TempDir()+"/absent.toml")
-	// Reuse off and probing off, so the log is only the two inventory reads the
+	// Reuse off and probing off, so the log is only the inventory reads the
 	// picker always makes and the focus the selection produces.
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", pluginConfigDir(t, "reuse_panes = false\nprobe = false\n"))
 	var calls [][]string
 	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
 		calls = append(calls, args)
-		if reflect.DeepEqual(args, []string{"api", "snapshot"}) {
+		switch {
+		case reflect.DeepEqual(args, []string{"api", "snapshot"}):
 			return []byte(`{"result":{"snapshot":{"workspaces":[{"workspace_id":"w1","label":"project"}]}}}`), nil
+		case reflect.DeepEqual(args, []string{"machine", "list", "--json"}):
+			return []byte(`[]`), nil
+		default:
+			return []byte(`{"result":{"panes":[]}}`), nil
 		}
-		return []byte(`{"result":{"panes":[]}}`), nil
 	}}
 	pick := func(o picker.NavOptions) (picker.NavSelection, bool, error) {
 		if len(o.Spaces) != 1 || o.Spaces[0].ID != "w1" {
@@ -135,7 +139,7 @@ func TestRunNavigatorUsesOneSnapshotAndFocusesSelection(t *testing.T) {
 	if err := runNavigatorWith(io.Discard, strings.NewReader(""), pick, api); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{{"api", "snapshot"}, {"pane", "list"}, {"workspace", "focus", "w1"}}
+	want := [][]string{{"api", "snapshot"}, {"pane", "list"}, {"machine", "list", "--json"}, {"workspace", "focus", "w1"}}
 	if !reflect.DeepEqual(calls, want) {
 		t.Fatalf("calls = %v, want %v", calls, want)
 	}

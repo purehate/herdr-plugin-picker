@@ -21,6 +21,11 @@ func fakeAPI(out string) (herdrapi.Client, *[][]string) {
 	var calls [][]string
 	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
 		calls = append(calls, args)
+		// machine list --json prints a bare array, not the result envelope the
+		// shared fixture carries, so it cannot be answered with out.
+		if len(args) == 3 && args[0] == "machine" && args[1] == "list" && args[2] == "--json" {
+			return []byte(`[]`), nil
+		}
 		return []byte(out), nil
 	}}
 	return api, &calls

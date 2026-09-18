@@ -150,6 +150,62 @@ func navigatorOptions(snapshot herdrapi.Snapshot, th theme.Theme, hosts []sshcon
 	}
 }
 
+// machineNavItems builds the machines tab from herdr's saved connection
+// profiles. A profile points at a remote herdr server, not an ssh host: the row
+// opens a remote client, not a shell.
+func machineNavItems(machines []herdrapi.Machine) []picker.NavItem {
+	out := make([]picker.NavItem, 0, len(machines))
+	for _, m := range machines {
+		label := navText(m.Label)
+		if label == "" {
+			label = navText(m.Target)
+		}
+		detail := navText(m.Target)
+		if m.Session != "" {
+			detail += " · " + navText(m.Session)
+		}
+		mark := "●"
+		if !m.Enabled {
+			mark = "○"
+		}
+		out = append(out, picker.NavItem{
+			ID:            m.ID,
+			Label:         mark + " " + label,
+			Detail:        detail,
+			Search:        navText(m.Target),
+			Current:       m.Selected,
+			Target:        m.Target,
+			RemoteSession: m.Session,
+		})
+	}
+	return out
+}
+
+// openMachine opens a remote herdr client for a saved machine. It is not the ssh
+// path: `herdr --remote` attaches a full client to the machine's own server,
+// with its own workspaces and agents, rather than opening a shell on the host.
+func openMachine(out io.Writer, api herdrapi.Client, item picker.NavItem) error {
+	ctx := resolveCaller(pickerCaller())
+	// Same liveness guard as the ssh path: herdr rejects a split whose target
+	// pane is gone, so a dead caller id costs the connection it was aiming for.
+	if ctx.PaneID != "" {
+		ctx.PaneID = livePaneID(listPanes(out, api), ctx.PaneID)
+	}
+	env := map[string]string{"HERDR_PICKER_TARGET": item.Target}
+	if item.RemoteSession != "" {
+		env["HERDR_PICKER_SESSION"] = item.RemoteSession
+	}
+	return api.PluginPaneOpen(herdrapi.OpenOpts{
+		Plugin:     pluginID,
+		Entrypoint: "remote",
+		Placement:  "split",
+		TargetPane: ctx.PaneID,
+		Direction:  "right",
+		Env:        env,
+		Focus:      true,
+	})
+}
+
 // openHosts opens the marked hosts, or the cursor host when nothing is marked.
 // Every host is recorded, so a multi-open updates frecency for all of them. The
 // caller context is resolved once by the caller and reused: it is the pane the
@@ -219,6 +275,10 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	if paneErr != nil {
 		_, _ = fmt.Fprintf(out, "herdr-picker: could not list panes: %v\n", paneErr)
 	}
+	// The machines tab reads the saved connection profiles. A failure is not
+	// fatal either: the tab opens with the reason instead of an empty list that
+	// would read as "no saved machines".
+	machines, machineErr := api.MachineList()
 	selfPane := currentCaller().PaneID
 	hosts, warnings := loadHosts(sshConfigPath(), cfg)
 	// Pins and frecency reorder the ssh tab only. Rank keeps this order for ties,
@@ -239,6 +299,10 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	warnings = append(loadWarnings, warnings...)
 
 	opts := navigatorOptions(snapshot, th, hosts, panes, selfPane)
+	opts.Machines = machineNavItems(machines)
+	if machineErr != nil {
+		opts.MachineNote = "could not list machines: " + navText(machineErr.Error())
+	}
 	opts.ShowPreview = cfg.ShowPreview
 	opts.Warnings = warnings
 	// The inventory on screen drifts the moment it is read — agents block and
@@ -319,6 +383,9 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	}
 	if sel.Section == picker.NavSSH {
 		return openHosts(out, api, cfg, sel, resolveCaller(pickerCaller()))
+	}
+	if sel.Section == picker.NavMachines {
+		return openMachine(out, api, sel.Item)
 	}
 	// A command acts where the operator was, so it takes the resolved caller
 	// like a jump does, rather than the popup's own ids.

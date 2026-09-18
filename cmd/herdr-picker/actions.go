@@ -47,6 +47,14 @@ func navActions(section picker.NavSection, item picker.NavItem) []picker.NavActi
 			{ID: "close", Label: "close tab", Confirm: "close this tab?"},
 			{ID: "copy-id", Label: "copy id", Copy: item.ID},
 		}
+	case picker.NavMachines:
+		// Read-only: the profile catalog belongs to `herdr machine`, so the menu
+		// only copies. Copy is handled by the picker, so runNavAction never sees
+		// these.
+		return []picker.NavAction{
+			{ID: "copy-id", Label: "copy id", Copy: item.ID},
+			{ID: "copy-target", Label: "copy ssh target", Copy: item.Target},
+		}
 	default:
 		return nil
 	}

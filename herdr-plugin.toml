@@ -20,7 +20,7 @@ version = "0.5.0"
 # untested compatibility claim. Lower it when someone has actually run the
 # picker on that version, not before.
 min_herdr_version = "0.9.0"
-description = "Floating keyboard-driven popup: jump to any space, agent, tab or pane, broadcast one command to every marked pane, SSH from ~/.ssh/config with live reachability, and run any action from any installed plugin."
+description = "Floating keyboard-driven popup: jump to any space, agent, tab or pane, broadcast one command to every marked pane, SSH from ~/.ssh/config with live reachability, attach to a saved machine's herdr server, and run any action from any installed plugin."
 platforms = ["macos", "linux"]
 
 [[build]]
@@ -68,3 +68,11 @@ id = "session"
 title = "ssh"
 placement = "split"
 command = ["./bin/herdr-picker", "session"]
+
+# The machines tab's Enter opens this instead of the session entrypoint: it
+# attaches a full herdr client to a saved machine's own server, not a shell.
+[[panes]]
+id = "remote"
+title = "herdr"
+placement = "split"
+command = ["./bin/herdr-picker", "remote"]

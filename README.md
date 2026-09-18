@@ -13,7 +13,7 @@ It stays a popup on purpose. It floats over your layout, does its one job, and
 gets out of the way — it never takes a pane hostage to show you a list.
 
 ```
-   spaces  agents  sessions  panes  ssh  cmd
+   spaces  agents  sessions  panes  ssh  machines  cmd
   ──────────────────────────────────────────────────────────────────────────────────────────
   / ▏
 
@@ -64,7 +64,7 @@ goto = "prefix+shift+j"
 key = "prefix+g"
 type = "plugin_action"
 command = "purehate.herdr-picker.open-navigator"
-description = "spaces, agents, sessions, panes, ssh, cmd"
+description = "spaces, agents, sessions, panes, ssh, machines, cmd"
 ```
 
 That is the whole binding — no paths, nothing machine-specific. The floating
@@ -92,6 +92,8 @@ switching tabs clears the query.
 - **panes** lists every pane across every workspace, with what is running in it
   and where. `space` marks panes and `^b` sends one command to all of them.
 - **ssh** lists the hosts in `~/.ssh/config` and opens one.
+- **machines** lists the SSH machines saved with `herdr machine add` and
+  attaches to one's remote herdr server.
 - **cmd** lists every verb you can invoke by name: a handful of built-in
   Herdr operations, plus every action each of your _other_ installed plugins
   exposes. Enter runs the selected one.
@@ -109,14 +111,23 @@ The preview reads `herdr agent read`; a prompt goes through `herdr agent
 prompt`, which herdr refuses for an already-blocked agent rather than sending
 input. Neither reads the agent's session file.
 
-It reads only the metadata in `herdr api snapshot` and `herdr pane list`, and
-invokes Herdr's own workspace, agent, tab, or pane focus command; it does not
-create panes on the first four tabs.
+It reads only the metadata in `herdr api snapshot`, `herdr pane list`, and
+`herdr machine list`, and invokes Herdr's own workspace, agent, tab, or pane
+focus command; it does not create panes on the first four tabs.
 
 On **ssh**, Enter opens a session in a split, `^t` in a new tab, `^z` in a
 zoomed pane, and `^n` forces a new pane even when a session for that host is
 already open. Type to fuzzy-filter on alias, then hostname; `^o` toggles the
 host preview. See [Markers](#markers) and [Keys](#keys).
+
+On **machines**, Enter attaches a full herdr client to the saved machine's own
+server — `herdr --remote <target>`, plus `--session <name>` when the profile
+names one — in a new split. That is a different thing from the ssh tab's shell
+on the same host: the remote machine keeps its own workspaces, tabs, agents,
+and running processes, and this client shows them. `^x` copies the profile id
+or the ssh target. The profile catalog belongs to `herdr machine`, so the
+picker only reads it; use `herdr machine add|rename|remove|enable|disable` to
+change it. A disabled profile still lists, with `○` instead of `●`.
 
 On **cmd**, Enter invokes the selected verb and closes the popup. The list is
 two things merged: a few built-in Herdr operations (split, zoom, new tab, new
@@ -217,8 +228,9 @@ cursor-down — `^j` / `^k` move the cursor.
 ## Actions
 
 `^x` opens a menu of actions for the row under the cursor on the spaces,
-agents, and sessions tabs. The ssh tab has none: a host is not a herdr object.
-`↑`/`↓` choose, Enter runs, Esc cancels.
+agents, and sessions tabs. The machines tab gets a shorter, read-only menu
+(copy only), and the ssh tab has none: a host is not a herdr object. `↑`/`↓`
+choose, Enter runs, Esc cancels.
 
 | Action            | On        | What it does                                    |
 | ----------------- | --------- | ----------------------------------------------- |
@@ -229,6 +241,8 @@ agents, and sessions tabs. The ssh tab has none: a host is not a herdr object.
 | copy id           | all three | copies the herdr id                             |
 | copy cwd          | agents    | copies the agent's working directory            |
 | open git worktree | agents    | opens the worktree the agent runs in            |
+| copy id           | machines  | copies the profile id                           |
+| copy ssh target   | machines  | copies the profile's ssh target                 |
 
 Rename asks for the new name in a one-line input and close asks `y`/`n` first;
 nothing else prompts. Copy uses OSC 52, so it works over ssh and needs no
@@ -401,16 +415,19 @@ alias, in a pane herdr opens for it. Your config, your keys, your agent, your
 failures read the same too.
 
 **Talks to herdr, and to nothing else.** Almost all of it goes through
-`$HERDR_BIN_PATH` — snapshot, pane list, focus, rename, close, and create
-workspaces, tabs, and panes; worktree open; and read or prompt agents. There is
-no network client, no telemetry, and no other process it starts. While the
-picker is open it re-runs `herdr api snapshot` and `herdr pane list` about once
-a second, so those subprocesses start repeatedly for as long as the popup is on
-screen; closing the popup stops it. The agents tab preview runs `herdr agent
-read` for the selected agent, and `^p` submits text with `herdr agent prompt` —
-so pressing Enter in the prompt sends that text to the agent you selected. `^x`
-can rename or close what is on screen and open tabs, workspaces, and worktrees,
-all through herdr.
+`$HERDR_BIN_PATH` — snapshot, pane list, machine list, focus, rename, close,
+and create workspaces, tabs, and panes; worktree open; read or prompt agents;
+and attach a remote client. There is no network client, no telemetry, and no
+other process it starts. While the picker is open it re-runs `herdr api
+snapshot` and `herdr pane list` about once a second, so those subprocesses
+start repeatedly for as long as the popup is on screen; closing the popup stops
+it. The agents tab preview runs `herdr agent read` for the selected agent, and
+`^p` submits text with `herdr agent prompt` — so pressing Enter in the prompt
+sends that text to the agent you selected. `^x` can rename or close what is on
+screen and open tabs, workspaces, and worktrees, all through herdr. On the
+machines tab, Enter opens a pane running `herdr --remote <target>`, which
+execs your `ssh` to reach the machine's own herdr server — the picker itself
+never opens that connection.
 
 **Two things do not go through the CLI: `^b` and the cmd tab.** Both use
 herdr's own unix socket at `$HERDR_SOCKET_PATH` — herdr's socket, set by herdr

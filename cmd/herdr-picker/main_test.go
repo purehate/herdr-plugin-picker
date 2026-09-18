@@ -323,13 +323,13 @@ func TestRunNavigatorMarksPanesOnlyWhenReuseIsOn(t *testing.T) {
 		{
 			name:      "reuse on marks",
 			body:      "probe = false\nreuse_panes = true\n",
-			wantCalls: "api snapshot | pane list",
+			wantCalls: "api snapshot | pane list | machine list --json",
 			wantPanes: 1,
 		},
 		{
 			name:      "reuse off does not mark",
 			body:      "probe = false\nreuse_panes = false\n",
-			wantCalls: "api snapshot | pane list",
+			wantCalls: "api snapshot | pane list | machine list --json",
 			wantPanes: 0,
 		},
 	} {

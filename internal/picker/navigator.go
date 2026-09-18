@@ -23,11 +23,12 @@ const (
 	NavSessions
 	NavPanes
 	NavSSH
+	NavMachines
 	NavCommands
 	navSectionCount
 )
 
-var navNames = [...]string{"spaces", "agents", "sessions", "panes", "ssh", "cmd"}
+var navNames = [...]string{"spaces", "agents", "sessions", "panes", "ssh", "machines", "cmd"}
 
 const (
 	navJumpLabel  = " ↵ jump "
@@ -86,6 +87,11 @@ type NavItem struct {
 	// Status is the agent state herdr reports for a pane, and "" for a pane
 	// running a plain shell. The panes tab draws it as the row's marker.
 	Status string
+
+	// Target and RemoteSession carry a saved machine's SSH target and remote
+	// herdr session, for the machines tab.
+	Target        string
+	RemoteSession string
 }
 
 // NavRefresh is the set of server-backed lists the picker rebuilds on each
@@ -114,6 +120,15 @@ type NavOptions struct {
 	// installed, not while a popup is open, and re-reading it every tick would
 	// spend a socket round trip per second to learn nothing.
 	Commands []NavItem
+
+	// Machines is the machines tab: saved SSH machine profiles from `herdr
+	// machine list`. Like Commands it is absent from NavRefresh, because the
+	// catalog changes when the operator adds or removes a machine, not while a
+	// popup is open.
+	Machines []NavItem
+	// MachineNote is a machine-list failure to show on the machines tab. The tab
+	// is empty in that case, and "no saved machines" would be a lie.
+	MachineNote string
 
 	// Broadcast sends text to every pane id, and returns a short status line for
 	// the footer. nil disables the panes tab's ^b. The text arrives exactly as
@@ -269,6 +284,8 @@ func (m navigatorModel) source() []NavItem {
 		return m.opts.Panes
 	case NavCommands:
 		return m.opts.Commands
+	case NavMachines:
+		return m.opts.Machines
 	default:
 		return sshNavItems(m.opts.Hosts, "")
 	}
@@ -892,6 +909,15 @@ func (m navigatorModel) emptyMessage() string {
 			return "no ~/.ssh/config — nothing to pick"
 		}
 		return "no ssh match"
+	}
+	if m.section == NavMachines {
+		if m.opts.MachineNote != "" {
+			return m.opts.MachineNote
+		}
+		if len(m.opts.Machines) == 0 {
+			return "no saved machines"
+		}
+		return "no machine match"
 	}
 	if len(m.source()) == 0 {
 		return "no " + navNames[m.section] + " open"

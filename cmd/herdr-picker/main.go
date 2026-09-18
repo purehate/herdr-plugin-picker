@@ -12,7 +12,7 @@ import (
 	"github.com/purehate/herdr-plugin-picker/internal/pluginconfig"
 )
 
-const usage = `usage: herdr-picker <navigator|session|connect <alias> [--placement split|tab|zoomed]|plugin open-navigator>`
+const usage = `usage: herdr-picker <navigator|session|remote|connect <alias> [--placement split|tab|zoomed]|plugin open-navigator>`
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -42,6 +42,8 @@ func run(args []string) error {
 		return runNavigator()
 	case "session":
 		return runSession()
+	case "remote":
+		return runRemote()
 	case "connect":
 		if len(args) < 2 {
 			return errors.New(usage)
