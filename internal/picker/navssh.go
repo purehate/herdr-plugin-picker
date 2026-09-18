@@ -31,6 +31,24 @@ func sshNavItems(hosts []sshconfig.Host, query string) []NavItem {
 	return out
 }
 
+// sshNavItemsRegex filters hosts by a case-insensitive pattern on the alias or
+// hostname, keeping config order. There are no matched-rune positions to
+// highlight: a regex has no single reading to point at, so the row is drawn
+// plain.
+func sshNavItemsRegex(hosts []sshconfig.Host, pattern string) ([]NavItem, error) {
+	re, err := compileQuery(pattern)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NavItem, 0, len(hosts))
+	for _, h := range hosts {
+		if re.MatchString(h.Alias) || re.MatchString(h.HostName) {
+			out = append(out, NavItem{ID: h.Alias, Host: h})
+		}
+	}
+	return out, nil
+}
+
 // markerCellWidth is the fixed width of the marker column: the glyph, a space,
 // and the widest latency ("999ms"). Fixed so the alias column does not shift as
 // probe results land, the same reason aliasColumnFor measures the whole set.

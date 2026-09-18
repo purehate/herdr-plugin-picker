@@ -2,6 +2,7 @@ package picker
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -92,6 +93,14 @@ type NavItem struct {
 	// herdr session, for the machines tab.
 	Target        string
 	RemoteSession string
+}
+
+// searchText is the haystack the filter and the ranker read. Label comes first
+// so a label hit can outrank a detail-only hit; the rest is metadata. It is one
+// function so fuzzy and regex modes can never disagree about what is
+// searchable.
+func (item NavItem) searchText() string {
+	return item.Label + " " + item.Detail + " " + item.Search
 }
 
 // NavRefresh is the set of server-backed lists the picker rebuilds on each
@@ -204,6 +213,13 @@ type navigatorModel struct {
 	// pendingG is the first g of a gg chord. A lone g followed by anything but
 	// another g is committed to the query, so a search can still start with g.
 	pendingG bool
+	// regex is the query mode toggled by /. In regex mode the query is a
+	// case-insensitive pattern and matching filters rather than ranks, so the
+	// list keeps the source order and the pattern does all the narrowing.
+	regex bool
+	// regexErr is the last failed pattern compile, kept so an empty list can say
+	// why instead of showing a bare "no match".
+	regexErr error
 	// probed and up are maps, so probe writes are visible through every copy of
 	// the model that shares them. Safe because bubbletea holds one model and
 	// discards the predecessor on each Update.
@@ -308,7 +324,7 @@ func rankNav(items []NavItem, query string) []NavItem {
 	hits := make([]hit, 0, len(items))
 	for _, item := range items {
 		label := strings.ToLower(item.Label)
-		all := strings.ToLower(item.Label + " " + item.Detail + " " + item.Search)
+		all := strings.ToLower(item.searchText())
 		score := 0
 		switch {
 		case strings.HasPrefix(label, q):
@@ -332,13 +348,48 @@ func rankNav(items []NavItem, query string) []NavItem {
 	return out
 }
 
+// rankNavRegex keeps the items whose search text matches the pattern, in source
+// order. Regex mode is a filter, not a ranker: there is no notion of a better
+// match, so the operator's pattern does all the narrowing and the list does not
+// reshuffle for reasons they cannot see.
+func rankNavRegex(items []NavItem, pattern string) ([]NavItem, error) {
+	re, err := compileQuery(pattern)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NavItem, 0, len(items))
+	for _, item := range items {
+		if re.MatchString(item.searchText()) {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+// compileQuery compiles a case-insensitive regex. (?i) rather than lowercasing
+// both sides: lowercasing the pattern would rewrite character classes and inline
+// flags the operator wrote — [A-Z] is not [a-z].
+func compileQuery(pattern string) (*regexp.Regexp, error) {
+	return regexp.Compile("(?i)" + pattern)
+}
+
 // refilter ranks the active section against the query. The ssh tab ranks through
 // Rank so the matched runes come back with the row; the other sections only need
-// an order.
+// an order. In regex mode both paths filter instead of ranking.
 func (m navigatorModel) refilter() navigatorModel {
-	if m.section == NavSSH {
+	m.regexErr = nil
+	switch {
+	case m.section == NavSSH && m.regex:
+		items, err := sshNavItemsRegex(m.opts.Hosts, m.query)
+		m.regexErr = err
+		m.items = items
+	case m.section == NavSSH:
 		m.items = sshNavItems(m.opts.Hosts, m.query)
-	} else {
+	case m.regex:
+		items, err := rankNavRegex(m.source(), m.query)
+		m.regexErr = err
+		m.items = items
+	default:
 		m.items = rankNav(m.source(), m.query)
 	}
 	m.cursor = 0
@@ -699,6 +750,11 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyEnd, 'G':
 			return m.moveTo(len(m.items) - 1), nil
+		case '/':
+			// Toggle fuzzy/regex. The query is kept, so a fuzzy search can be
+			// refined into a pattern without retyping it.
+			m.regex = !m.regex
+			return m.refilter(), nil
 		default:
 			if msg.Text != "" {
 				m.query += msg.Text
@@ -854,6 +910,21 @@ func (m navigatorModel) queryDisplay() string {
 	return m.query + "▏"
 }
 
+// queryPrompt is the prefix in front of the query: the fuzzy prompt, or the
+// regex marker that makes the mode visible at a glance.
+func (m navigatorModel) queryPrompt() string {
+	if m.regex {
+		return ".* "
+	}
+	return "/ "
+}
+
+// regexMessage trims regexp's "error parsing regexp: " prefix, which is noise
+// in a one-line message that already says the mode.
+func regexMessage(err error) string {
+	return strings.TrimPrefix(err.Error(), "error parsing regexp: ")
+}
+
 // moveTo puts the cursor on a row, clamped into the list, and clears the
 // pending-g chord. gg, G, Home, and End all land through it.
 func (m navigatorModel) moveTo(i int) navigatorModel {
@@ -914,7 +985,7 @@ func (m navigatorModel) View() tea.View {
 		"",
 		tabs,
 		frameIndent + rule(w-2*len(frameIndent), s.muted),
-		frameIndent + s.muted.Render("/ ") + s.text.Render(m.queryDisplay()),
+		frameIndent + s.muted.Render(m.queryPrompt()) + s.text.Render(m.queryDisplay()),
 		"",
 	}
 	switch {
@@ -973,6 +1044,9 @@ func (m navigatorModel) View() tea.View {
 }
 
 func (m navigatorModel) emptyMessage() string {
+	if m.regexErr != nil {
+		return "bad regex: " + regexMessage(m.regexErr)
+	}
 	if m.section == NavSSH {
 		if len(m.opts.Hosts) == 0 {
 			return "no ~/.ssh/config — nothing to pick"

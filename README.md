@@ -173,6 +173,7 @@ On every tab:
 | `↑` / `↓`, `^k` / `^j` | move the cursor                                     |
 | `g` `g` / `G`          | jump to the top / bottom of the list                |
 | `home` / `end`         | the same jumps without the `g` chord                |
+| `/`                    | toggle regex matching for the query                 |
 | `←` / `→`, Tab         | change tab                                          |
 | `enter`                | jump to the row, ssh in a split, or run the command |
 | `^x`                   | row actions (not on the ssh tab)                    |
@@ -231,6 +232,13 @@ cursor-down — `^j` / `^k` move the cursor.
 pending `g`, the second `g` jumps to the top. Any other key in between commits
 the `g` to the query, so a search can still start with the letter, and Esc
 cancels the half-typed chord.
+
+`/` switches the query between fuzzy matching and a regular expression. The
+prompt changes from `/` to `.*` so the mode is visible, and the query is kept,
+so a fuzzy search can be refined into a pattern without retyping it. The
+pattern is case-insensitive; it filters the rows rather than ranking them, so
+the list keeps its source order. A pattern that does not compile empties the
+list and the message says `bad regex:` and why.
 
 ## Actions
 
