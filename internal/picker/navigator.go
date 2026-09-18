@@ -31,6 +31,28 @@ const (
 
 var navNames = [...]string{"spaces", "agents", "sessions", "panes", "ssh", "machines", "cmd"}
 
+// NavName is the stable name of a tab. It is what the last-tab state file
+// stores, rather than an index, so adding or reordering tabs cannot silently
+// move the operator to a different one.
+func NavName(s NavSection) string {
+	if s < 0 || int(s) >= len(navNames) {
+		return ""
+	}
+	return navNames[s]
+}
+
+// NavSectionByName resolves a saved tab name. An unknown name — a tab that was
+// removed, or a corrupt file — reports false and the caller opens on the
+// default.
+func NavSectionByName(name string) (NavSection, bool) {
+	for i, n := range navNames {
+		if n == name {
+			return NavSection(i), true
+		}
+	}
+	return NavSpaces, false
+}
+
 const (
 	navJumpLabel  = " ↵ jump "
 	navCloseLabel = "esc close"
@@ -119,6 +141,13 @@ type NavOptions struct {
 	Agents   []NavItem
 	Sessions []NavItem
 	Panes    []NavItem
+
+	// StartSection is the tab to open on. The zero value is NavSpaces; the caller
+	// sets it from the persisted last tab.
+	StartSection NavSection
+	// OnSection, when set, is called whenever the active tab changes, so the
+	// caller can persist it. The picker does no file I/O of its own.
+	OnSection func(NavSection)
 
 	// Commands is the cmd tab: every verb the operator can invoke by name
 	// rather than by remembering which key is bound to it. The picker ranks and
@@ -286,6 +315,7 @@ type navigatorModel struct {
 func newNavigatorModel(o NavOptions) navigatorModel {
 	m := navigatorModel{
 		opts:    o,
+		section: o.StartSection,
 		preview: o.ShowPreview,
 		probed:  map[string]bool{},
 		up:      map[string]bool{},
@@ -1070,6 +1100,11 @@ func (m navigatorModel) setSection(s NavSection) navigatorModel {
 	m.query = ""
 	m.pendingG = false
 	m.marked = map[string]bool{}
+	// Persist the tab through the caller's callback, so the picker package
+	// stays free of file I/O.
+	if m.opts.OnSection != nil {
+		m.opts.OnSection(s)
+	}
 	return m.refilter()
 }
 

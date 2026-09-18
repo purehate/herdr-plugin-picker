@@ -303,6 +303,14 @@ func runNavigatorWith(out io.Writer, in io.Reader, pick navigatorFn, api herdrap
 	if machineErr != nil {
 		opts.MachineNote = "could not list machines: " + navText(machineErr.Error())
 	}
+	// Open on the tab the operator last used. An unknown or missing name opens on
+	// spaces, and every later change is written back through OnSection. The write
+	// is best effort and never blocks the picker.
+	tabPath := lastTabPath()
+	if s, ok := picker.NavSectionByName(loadLastTab(tabPath)); ok {
+		opts.StartSection = s
+	}
+	opts.OnSection = func(s picker.NavSection) { saveLastTab(tabPath, s) }
 	opts.ShowPreview = cfg.ShowPreview
 	opts.Warnings = warnings
 	// The inventory on screen drifts the moment it is read — agents block and

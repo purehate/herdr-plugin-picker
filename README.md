@@ -80,8 +80,10 @@ two.
 
 ## The tabs
 
-The picker opens on **spaces**. `←`/`→` or Tab/Shift-Tab change tabs, and
-switching tabs clears the query.
+The picker opens on the tab you last used — remembered in the plugin state
+directory, by name, so a future release that adds a tab cannot silently move
+you to a different one. The very first run opens on **spaces**. `←`/`→` or
+Tab/Shift-Tab change tabs, and switching tabs clears the query.
 
 - **spaces** lists workspaces, with their tab and pane counts.
 - **agents** lists recognized agent panes, with their workspace and status. The
@@ -412,13 +414,15 @@ show you. It never writes to them.
 a line in your config; the file it points at is not read. No key, passphrase or
 credential is read, stored or sent anywhere.
 
-**Writes two files.** `ssh-usage.json` in the plugin's state directory records
+**Writes three files.** `ssh-usage.json` in the plugin's state directory records
 how often each alias is opened, so the ssh tab can put the ones you use first;
-`command-usage.json` does the same for the cmd tab, keyed by command id. They
-hold names and counters only — no arguments, no hostnames beyond the alias you
-already wrote in your config — and each is written through a temp file and a
-rename so a crash cannot truncate it. Everything else is stateless: the action
-forwards the caller's pane, tab, and workspace ids directly to the picker
+`command-usage.json` does the same for the cmd tab, keyed by command id; and
+`last-tab` holds the name of the tab you were last on, so the next popup opens
+there. They hold names and counters only — no arguments, no hostnames beyond the
+alias you already wrote in your config — and the two usage files are each
+written through a temp file and a rename so a crash cannot truncate them. (A
+lost `last-tab` only costs you the default tab.) Everything else is stateless: the
+action forwards the caller's pane, tab, and workspace ids directly to the picker
 process, which is what lets `enter` split the pane you were working in without
 storing shared state that another picker could overwrite.
 

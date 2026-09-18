@@ -118,6 +118,7 @@ func TestRunNavigatorUsesOneSnapshotAndFocusesSelection(t *testing.T) {
 	// Reuse off and probing off, so the log is only the inventory reads the
 	// picker always makes and the focus the selection produces.
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", pluginConfigDir(t, "reuse_panes = false\nprobe = false\n"))
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
 	var calls [][]string
 	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
 		calls = append(calls, args)
@@ -170,6 +171,7 @@ func TestRunNavigatorRefreshRereadsSnapshot(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("HERDR_CONFIG_PATH", t.TempDir()+"/absent.toml")
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", pluginConfigDir(t, "reuse_panes = false\nprobe = false\n"))
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
 	var snapshots int
 	api := herdrapi.Client{Run: func(args []string) ([]byte, error) {
 		if reflect.DeepEqual(args, []string{"api", "snapshot"}) {
@@ -208,6 +210,7 @@ func TestRunNavigatorSSHSelectionOpensASession(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("HERDR_CONFIG_PATH", t.TempDir()+"/absent.toml")
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", pluginConfigDir(t, "reuse_panes = false\nprobe = false\n"))
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
 	api, calls := fakeAPI(openPanesJSON)
 
 	host := sshconfig.Host{Alias: "web1", HostName: "192.0.2.1", Port: "22"}

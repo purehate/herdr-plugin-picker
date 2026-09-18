@@ -97,6 +97,10 @@ func navigatorEnv(t *testing.T, home string) {
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", "")
 	t.Setenv("HERDR_CONFIG_PATH", "")
 	t.Setenv("HERDR_PANE_ID", "")
+	// Cleared so the last-tab write cannot land in the operator's real state
+	// directory when these tests run from inside herdr; the temp home's fallback
+	// is where it goes instead.
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", "")
 	// Cleared because these tests are run from inside herdr as often as not,
 	// and an inherited socket path would wire ^b to the operator's live panes.
 	t.Setenv("HERDR_SOCKET_PATH", "")
