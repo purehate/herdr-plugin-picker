@@ -829,6 +829,8 @@ func (m navigatorModel) handleCtrl(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.openPromptInput()
 	case 'x':
 		return m.openMenu()
+	case 'y':
+		return m.yank()
 	}
 	return m, nil
 }

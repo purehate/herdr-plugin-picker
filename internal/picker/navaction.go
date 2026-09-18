@@ -88,6 +88,37 @@ func (m navigatorModel) menuKey(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// yank puts the cursor row's identity on the clipboard with OSC 52, without
+// opening the ^x menu. What "identity" is depends on the tab: an ssh alias, a
+// machine's ssh target, otherwise the herdr id. The footer names what was
+// copied, because OSC 52 is silent and a terminal that does not speak it would
+// otherwise give no sign the key did anything.
+func (m navigatorModel) yank() (tea.Model, tea.Cmd) {
+	item, ok := m.cursorItem()
+	if !ok {
+		return m, nil
+	}
+	value, label := m.yankValue(item)
+	if value == "" {
+		return m, nil
+	}
+	m.note = "copied " + label
+	m.noteFor = item.ID
+	m.noteErr = false
+	return m, tea.SetClipboard(value)
+}
+
+// yankValue is what ^y copies for a row, and the word the footer uses for it.
+func (m navigatorModel) yankValue(item NavItem) (string, string) {
+	switch m.section {
+	case NavSSH:
+		return item.Host.Alias, "alias"
+	case NavMachines:
+		return item.Target, "ssh target"
+	}
+	return item.ID, "id"
+}
+
 // runMenuAction dispatches the highlighted action to whichever mode it needs.
 // The row and section were captured when the menu opened, so the action applies
 // to the row the operator saw.

@@ -178,6 +178,7 @@ On every tab:
 | `←` / `→`, Tab         | change tab                                          |
 | `enter`                | jump to the row, ssh in a split, or run the command |
 | `^x`                   | row actions (not on the ssh tab)                    |
+| `^y`                   | copy the row's id, ssh alias, or ssh target         |
 | `space`                | mark the row (panes and ssh tabs)                   |
 | `esc`, `^c`            | close                                               |
 
@@ -268,7 +269,9 @@ Rename asks for the new name in a one-line input and close asks `y`/`n` first;
 nothing else prompts. Copy uses OSC 52, so it works over ssh and needs no
 `pbcopy` or `xclip` — a terminal that does not speak OSC 52 will simply not
 receive it. The result appears in the footer, and the live refresh picks up a
-rename or a close on its next tick.
+rename or a close on its next tick. `^y` copies without opening the menu: the
+herdr id on most tabs, the ssh alias on the ssh tab, and the ssh target on the
+machines tab.
 
 ## Markers
 
