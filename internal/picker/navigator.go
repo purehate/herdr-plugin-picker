@@ -748,10 +748,10 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// handling below.
 		if m.pendingG {
 			m.pendingG = false
-			switch {
-			case msg.Code == 'g':
+			switch msg.Code {
+			case 'g':
 				return m.moveTo(0), nil
-			case msg.Code == tea.KeyEsc:
+			case tea.KeyEsc:
 				return m, nil
 			}
 			m.query += "g"
