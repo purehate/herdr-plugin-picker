@@ -17,17 +17,26 @@ gets out of the way — it never takes a pane hostage to show you a list.
   ──────────────────────────────────────────────────────────────────────────────────────────
   / ▏
 
-  ▸ ● staging      deploy@127.0.0.1:2022
-    ○ web1         deploy@web1.example
-    ○ db-primary   deploy@192.0.2.10
-    ○ bastion      deploy@bastion.example:2222
-    ~ behind-jump  via bastion
+  ▸ ● <1ms  staging      deploy@127.0.0.1:2022
+    ○       web1         deploy@web1.example
+    ○       db-primary   deploy@192.0.2.10
+    ○       bastion      deploy@bastion.example:2222
+    ~       behind-jump  via bastion
+    ○       cache1       deploy@192.0.2.21
+    ○       worker1      deploy@192.0.2.31
+    ○       worker2      deploy@192.0.2.32
+    ○       metrics      deploy@192.0.2.40
+    ○       logs         deploy@192.0.2.41
+    ○       build        deploy@192.0.2.60
+    ○       registry     deploy@192.0.2.61
+    ○       vpn-gw       deploy@vpn.example
+    ○       mail         deploy@mail.example
     ─────
-    HostName      127.0.0.1
-    Port          2022
-    User          deploy
-    source        ~/.ssh/conf.d/staging.conf:1
-  ↑↓ select   ←→/tab section   ^o preview   ^u clear
+    HostName        127.0.0.1
+    Port            2022
+    User            deploy
+    source          ~/.ssh/conf.d/staging.conf:1
+  ↑↓ select   ←→/tab section   ^o preview   space mark   ^u clear
   ^t tab   ^z zoom   ^n new    ↵ split    esc close
 ```
 
@@ -35,8 +44,10 @@ That is a real capture, not a mockup — the picker running against a throwaway
 config built from names RFC 2606 and RFC 5737 reserve for documentation, so
 nothing in it can be a host anyone owns. `staging` comes from an `Include`, and
 its `source` line is how you tell an include chain resolved from an alias that
-merely exists somewhere. `●` means the port answered, `○` means it did not, and
-`~` means the host is proxied and was deliberately left alone.
+merely exists somewhere. `●` means the port answered, with the round-trip time
+beside it; `○` means it did not; and `~` means the host is proxied and was
+deliberately left alone. Regenerate it with `python3
+scripts/capture-readme-frame.py`.
 
 ## Install
 
