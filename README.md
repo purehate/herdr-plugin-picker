@@ -174,6 +174,7 @@ On every tab:
 | `g` `g` / `G`          | jump to the top / bottom of the list                |
 | `home` / `end`         | the same jumps without the `g` chord                |
 | `/`                    | toggle regex matching for the query                 |
+| `?`                    | show the key list                                   |
 | `←` / `→`, Tab         | change tab                                          |
 | `enter`                | jump to the row, ssh in a split, or run the command |
 | `^x`                   | row actions (not on the ssh tab)                    |
@@ -239,6 +240,10 @@ so a fuzzy search can be refined into a pattern without retyping it. The
 pattern is case-insensitive; it filters the rows rather than ranking them, so
 the list keeps its source order. A pattern that does not compile empties the
 list and the message says `bad regex:` and why.
+
+`?` shows the key list, scoped to the tab you are on, so it never advertises a
+key that does nothing there. `↑`/`↓` scroll it and `?` or Esc closes it; the
+keys are all listed in [Keys](#keys) too.
 
 ## Actions
 

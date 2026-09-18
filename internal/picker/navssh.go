@@ -249,7 +249,7 @@ func (m navigatorModel) warningLines() int {
 // shows these: they are all about the ssh config, and the other tabs have
 // nothing to do with it.
 func (m navigatorModel) renderWarnings(s styles) []string {
-	if m.section != NavSSH {
+	if m.section != NavSSH || m.helpOpen {
 		return nil
 	}
 	shown := m.opts.Warnings

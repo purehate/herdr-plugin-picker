@@ -220,6 +220,10 @@ type navigatorModel struct {
 	// regexErr is the last failed pattern compile, kept so an empty list can say
 	// why instead of showing a bare "no match".
 	regexErr error
+	// helpOpen is the ? overlay, and helpOffset its scroll position when the key
+	// list is taller than the popup.
+	helpOpen   bool
+	helpOffset int
 	// probed and up are maps, so probe writes are visible through every copy of
 	// the model that shares them. Safe because bubbletea holds one model and
 	// discards the predecessor on each Update.
@@ -684,6 +688,26 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.menuActions != nil:
 			return m.menuKey(msg)
 		}
+		// The help overlay owns the keyboard while it is up: j/k and the arrows
+		// scroll, and the keys that open or dismiss it close it. Everything else
+		// is swallowed rather than editing a query the operator cannot see.
+		if m.helpOpen {
+			switch msg.Code {
+			case tea.KeyDown, 'j':
+				m.helpOffset++
+			case tea.KeyUp, 'k':
+				if m.helpOffset > 0 {
+					m.helpOffset--
+				}
+			case tea.KeyHome, 'g':
+				m.helpOffset = 0
+			case tea.KeyEnd, 'G':
+				m.helpOffset = len(m.helpKeys())
+			case tea.KeyEsc, '?', 'q', tea.KeyEnter, tea.KeySpace:
+				m.helpOpen = false
+			}
+			return m, nil
+		}
 		if msg.Mod&tea.ModCtrl != 0 {
 			m.pendingG = false
 			return m.handleCtrl(msg)
@@ -755,6 +779,10 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// refined into a pattern without retyping it.
 			m.regex = !m.regex
 			return m.refilter(), nil
+		case '?':
+			m.helpOpen = true
+			m.helpOffset = 0
+			return m, nil
 		default:
 			if msg.Text != "" {
 				m.query += msg.Text
@@ -871,6 +899,9 @@ func (m navigatorModel) listWindow() (start, rows int) {
 // previewBlockLines is the rows the active section's preview occupies. Only the
 // ssh and agents tabs have one.
 func (m navigatorModel) previewBlockLines() int {
+	if m.helpOpen {
+		return 0
+	}
 	switch m.section {
 	case NavSSH:
 		return m.sshPreviewLines()
@@ -882,6 +913,9 @@ func (m navigatorModel) previewBlockLines() int {
 }
 
 func (m navigatorModel) renderPreviewBlock(s styles) []string {
+	if m.helpOpen {
+		return nil
+	}
 	switch m.section {
 	case NavSSH:
 		return m.renderSSHPreview(s)
@@ -923,6 +957,77 @@ func (m navigatorModel) queryPrompt() string {
 // in a one-line message that already says the mode.
 func regexMessage(err error) string {
 	return strings.TrimPrefix(err.Error(), "error parsing regexp: ")
+}
+
+// helpKeys is the key list the ? overlay shows: the global keys first, then the
+// active tab's own. It is a function of the section so the overlay never shows a
+// key that does nothing where the operator is standing.
+func (m navigatorModel) helpKeys() [][2]string {
+	rows := [][2]string{
+		{"type", "fuzzy filter the list"},
+		{"/", "toggle regex matching"},
+		{"backspace", "delete a character"},
+		{"^w / ^u", "delete a word / clear the query"},
+		{"↑↓, ^k ^j", "move the cursor"},
+		{"g g / G", "jump to the top / bottom"},
+		{"home / end", "the same jumps without the chord"},
+		{"←→, tab", "change tab"},
+		{"enter", "jump, ssh, attach, or run"},
+		{"^x", "row actions"},
+		{"esc, ^c", "close"},
+		{"?", "this help"},
+	}
+	switch m.section {
+	case NavSSH:
+		rows = append(rows,
+			[2]string{"space", "mark the host; enter opens all marked"},
+			[2]string{"^t / ^z", "ssh in a new tab / a zoomed pane"},
+			[2]string{"^n", "force a new pane even if one exists"},
+			[2]string{"^o", "toggle the host preview"},
+		)
+	case NavPanes:
+		rows = append(rows,
+			[2]string{"space", "mark the pane"},
+			[2]string{"^a", "mark every listed pane; again to clear"},
+			[2]string{"^b", "send one command to every marked pane"},
+		)
+	case NavAgents:
+		rows = append(rows, [2]string{"^p", "type a prompt; enter sends"})
+	case NavMachines:
+		rows = append(rows, [2]string{"enter", "attach herdr --remote to the machine"})
+	}
+	return rows
+}
+
+// renderHelp draws the ? overlay into the list area: the tab's name, then the
+// key column padded so the descriptions line up, scrolled to helpOffset.
+func (m navigatorModel) renderHelp(s styles, rows int) []string {
+	keys := m.helpKeys()
+	// Two lines go to the title and its blank, so that many fewer keys fit.
+	visible := max(1, rows-2)
+	start := m.helpOffset
+	if max := len(keys) - visible; start > max {
+		start = max
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	width := 0
+	for _, k := range keys {
+		if w := lipgloss.Width(k[0]); w > width {
+			width = w
+		}
+	}
+	out := []string{
+		frameIndent + s.muted.Render("keys — "+navNames[m.section]),
+		"",
+	}
+	for i := start; i < len(keys) && len(out) < rows; i++ {
+		key := keys[i][0] + strings.Repeat(" ", width-lipgloss.Width(keys[i][0]))
+		out = append(out, frameIndent+"  "+s.accent.Render(key)+"  "+s.text.Render(keys[i][1]))
+	}
+	return out
 }
 
 // moveTo puts the cursor on a row, clamped into the list, and clears the
@@ -985,10 +1090,16 @@ func (m navigatorModel) View() tea.View {
 		"",
 		tabs,
 		frameIndent + rule(w-2*len(frameIndent), s.muted),
-		frameIndent + s.muted.Render(m.queryPrompt()) + s.text.Render(m.queryDisplay()),
-		"",
+	}
+	if !m.helpOpen {
+		lines = append(lines,
+			frameIndent+s.muted.Render(m.queryPrompt())+s.text.Render(m.queryDisplay()),
+			"",
+		)
 	}
 	switch {
+	case m.helpOpen:
+		lines = append(lines, m.renderHelp(s, rows)...)
 	case m.menuActions != nil:
 		lines = append(lines, m.renderMenu(s, selected, rows, w)...)
 	case len(m.items) == 0:
@@ -1069,6 +1180,9 @@ func (m navigatorModel) emptyMessage() string {
 }
 
 func (m navigatorModel) footerHints(s styles) string {
+	if m.helpOpen {
+		return frameIndent + s.muted.Render("↑↓ scroll   ? or esc close")
+	}
 	switch {
 	case m.confirmOpen:
 		return frameIndent + s.muted.Render("y confirm   n cancel")
@@ -1106,6 +1220,9 @@ func (m navigatorModel) footerHints(s styles) string {
 }
 
 func (m navigatorModel) footerActions(s styles, selected lipgloss.Style) string {
+	if m.helpOpen {
+		return ""
+	}
 	if m.inputOpen {
 		return frameIndent + s.accent.Render(m.inputLabel+" ") + s.text.Render(m.inputText+"▏")
 	}
