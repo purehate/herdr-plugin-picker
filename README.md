@@ -171,6 +171,8 @@ On every tab:
 | `^w`                   | delete the last word of the query                   |
 | `^u`                   | clear the query                                     |
 | `↑` / `↓`, `^k` / `^j` | move the cursor                                     |
+| `g` `g` / `G`          | jump to the top / bottom of the list                |
+| `home` / `end`         | the same jumps without the `g` chord                |
 | `←` / `→`, Tab         | change tab                                          |
 | `enter`                | jump to the row, ssh in a split, or run the command |
 | `^x`                   | row actions (not on the ssh tab)                    |
@@ -224,6 +226,11 @@ input is sent, and the picker shows why rather than swallowing it.
 
 If you came from `fzf`, note that `^n` is a placement key here, not
 cursor-down — `^j` / `^k` move the cursor.
+
+`g` is a chord, not a jump: the first `g` arms it and the query line shows the
+pending `g`, the second `g` jumps to the top. Any other key in between commits
+the `g` to the query, so a search can still start with the letter, and Esc
+cancels the half-typed chord.
 
 ## Actions
 

@@ -201,6 +201,9 @@ type navigatorModel struct {
 	width   int
 	height  int
 	preview bool
+	// pendingG is the first g of a gg chord. A lone g followed by anything but
+	// another g is committed to the query, so a search can still start with g.
+	pendingG bool
 	// probed and up are maps, so probe writes are visible through every copy of
 	// the model that shares them. Safe because bubbletea holds one model and
 	// discards the predecessor on each Update.
@@ -631,7 +634,23 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.menuKey(msg)
 		}
 		if msg.Mod&tea.ModCtrl != 0 {
+			m.pendingG = false
 			return m.handleCtrl(msg)
+		}
+		// A pending g is a chord prefix. The second g is gg and lands on the top
+		// row; Esc cancels the chord; any other key commits the g to the query so
+		// a search that starts with g still types, then falls through to its own
+		// handling below.
+		if m.pendingG {
+			m.pendingG = false
+			switch {
+			case msg.Code == 'g':
+				return m.moveTo(0), nil
+			case msg.Code == tea.KeyEsc:
+				return m, nil
+			}
+			m.query += "g"
+			m = m.refilter()
 		}
 		// Space marks on the two tabs that act on a set. On ssh it costs nothing:
 		// aliases are whitespace-separated, so a space in the query could never
@@ -670,6 +689,16 @@ func (m navigatorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.query = string(r[:len(r)-1])
 				return m.refilter(), nil
 			}
+		case tea.KeyHome:
+			return m.moveTo(0), nil
+		case 'g':
+			// A bare g arms the gg chord; it does not move, so a single g is
+			// never a jump and the second g is what lands on the top row. The
+			// query line shows the pending g.
+			m.pendingG = true
+			return m, nil
+		case tea.KeyEnd, 'G':
+			return m.moveTo(len(m.items) - 1), nil
 		default:
 			if msg.Text != "" {
 				m.query += msg.Text
@@ -689,6 +718,9 @@ func (m navigatorModel) handleCtrl(k tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case 'u':
 		m.query = ""
+		return m.refilter(), nil
+	case 'w':
+		m.query = trimLastWord(m.query)
 		return m.refilter(), nil
 	case 'j':
 		return m.move(1), nil
@@ -811,6 +843,42 @@ func (m navigatorModel) move(delta int) navigatorModel {
 	return m
 }
 
+// queryDisplay is the query line's text: the query, the caret, and — while a gg
+// chord is half-typed — the pending g, so the chord is visible the way vim's
+// showcmd makes it visible. The g is only committed to the query if the next
+// key breaks the chord.
+func (m navigatorModel) queryDisplay() string {
+	if m.pendingG {
+		return m.query + "g▏"
+	}
+	return m.query + "▏"
+}
+
+// moveTo puts the cursor on a row, clamped into the list, and clears the
+// pending-g chord. gg, G, Home, and End all land through it.
+func (m navigatorModel) moveTo(i int) navigatorModel {
+	m.pendingG = false
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(m.items) {
+		i = len(m.items) - 1
+	}
+	m.cursor = i
+	return m
+}
+
+// trimLastWord drops the trailing run of non-space characters and the spaces
+// before it, the way a shell's ^w does. It is a query edit, not a tokenizer:
+// the query is a fuzzy string, so "words" are only whitespace-delimited.
+func trimLastWord(q string) string {
+	q = strings.TrimRight(q, " ")
+	if i := strings.LastIndexByte(q, ' '); i >= 0 {
+		return q[:i+1]
+	}
+	return ""
+}
+
 func (m navigatorModel) switchSection(delta int) navigatorModel {
 	return m.setSection((m.section + NavSection(delta) + navSectionCount) % navSectionCount)
 }
@@ -822,6 +890,7 @@ func (m navigatorModel) switchSection(delta int) navigatorModel {
 func (m navigatorModel) setSection(s NavSection) navigatorModel {
 	m.section = s
 	m.query = ""
+	m.pendingG = false
 	m.marked = map[string]bool{}
 	return m.refilter()
 }
@@ -845,7 +914,7 @@ func (m navigatorModel) View() tea.View {
 		"",
 		tabs,
 		frameIndent + rule(w-2*len(frameIndent), s.muted),
-		frameIndent + s.muted.Render("/ ") + s.text.Render(m.query+"▏"),
+		frameIndent + s.muted.Render("/ ") + s.text.Render(m.queryDisplay()),
 		"",
 	}
 	switch {
